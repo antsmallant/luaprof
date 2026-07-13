@@ -14,17 +14,26 @@ local memory = assert(profile.memory.start {
     track_free = true,
 })
 
+local bridge_allocations = {}
+for i = 1, 100 do
+    bridge_allocations[i] = { value = i }
+end
+
 local memory_result = assert(memory:stop())
 local memory_stats = memory_result:stats()
 assert(memory_stats.kind == "memory")
 assert(memory_stats.sample_bytes == 4096)
 assert(memory_stats.track_free == true)
 assert(memory_stats.active == false)
+assert(memory_stats.allocation_events > 0)
+assert(memory_stats.reallocation_events > 0)
 
 local cpu_result = assert(cpu:stop())
 local cpu_stats = cpu_result:stats()
 assert(cpu_stats.kind == "cpu")
 assert(cpu_stats.generation ~= memory_stats.generation)
+assert(cpu_stats.state_lua > 0)
+assert(cpu_stats.state_c > 0)
 
 local stopped, stopped_error = cpu:stop()
 assert(stopped == nil)

@@ -12,9 +12,10 @@ typedef struct fake_host {
 } fake_host;
 
 static lp_status
-fake_start(void *userdata, lp_runtime *runtime, uint64_t generation,
-	const lp_collector_config *config) {
+fake_start(void *userdata, lp_runtime *runtime, lua_State *current_state,
+	uint64_t generation, const lp_collector_config *config) {
 	fake_host *host = userdata;
+	(void)current_state;
 	assert(generation != 0);
 	assert(lp_runtime_active(runtime, config->kind));
 	if (host->fail_next_start) {
@@ -27,9 +28,10 @@ fake_start(void *userdata, lp_runtime *runtime, uint64_t generation,
 }
 
 static void
-fake_stop(void *userdata, lp_runtime *runtime, lp_collector_kind kind,
-	uint64_t generation) {
+fake_stop(void *userdata, lp_runtime *runtime, lua_State *current_state,
+	lp_collector_kind kind, uint64_t generation) {
 	fake_host *host = userdata;
+	(void)current_state;
 	assert(generation != 0);
 	assert(!lp_runtime_active(runtime, kind));
 	assert(host->callback_active[kind]);
@@ -79,49 +81,77 @@ main(void) {
 	uint64_t memory_generation = 0;
 	lp_collector_config invalid_memory = memory;
 	invalid_memory.value.memory.sample_bytes = 0;
-	assert(lp_runtime_start(runtime, &invalid_memory,
+	assert(lp_runtime_start(runtime, state_identity, &invalid_memory,
 		&memory_generation) == LP_ERR_ARGUMENT);
-	assert(lp_runtime_start(runtime, &cpu, &cpu_generation) == LP_OK);
-	assert(lp_runtime_start(runtime, &cpu, &memory_generation) == LP_ERR_BUSY);
-	assert(lp_runtime_start(runtime, &memory, &memory_generation) == LP_OK);
+	assert(lp_runtime_start(runtime, state_identity, &cpu,
+		&cpu_generation) == LP_OK);
+	assert(lp_runtime_start(runtime, state_identity, &cpu,
+		&memory_generation) == LP_ERR_BUSY);
+	assert(lp_runtime_start(runtime, state_identity, &memory,
+		&memory_generation) == LP_OK);
 	assert(cpu_generation != memory_generation);
 	assert(host.callback_active[LP_COLLECTOR_CPU]);
 	assert(host.callback_active[LP_COLLECTOR_MEMORY]);
+	lp_runtime_safe_point(runtime, cpu_generation, state_identity, 5);
+	lp_runtime_safe_point(runtime, cpu_generation + 1, state_identity, 20);
+	lp_runtime_state_change(runtime, cpu_generation, state_identity,
+		LP_VM_C, NULL);
+	lp_runtime_allocation(runtime, memory_generation, state_identity,
+		NULL, &host, 0, 64, true);
+	lp_runtime_allocation(runtime, memory_generation, state_identity,
+		&host, &host, 64, 128, true);
+	lp_runtime_allocation(runtime, memory_generation, state_identity,
+		&host, NULL, 128, 0, true);
+	lp_runtime_allocation(runtime, memory_generation, state_identity,
+		&host, NULL, 128, 256, false);
 
 	lp_result_meta result;
-	assert(lp_runtime_stop(runtime, LP_COLLECTOR_MEMORY,
+	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
 		memory_generation + 1, &result) == LP_ERR_STALE);
-	assert(lp_runtime_stop(runtime, LP_COLLECTOR_MEMORY,
+	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
 		memory_generation, &result) == LP_OK);
 	assert(result.kind == LP_COLLECTOR_MEMORY);
 	assert(result.config.value.memory.track_free);
+	assert(result.stats.allocations == 1);
+	assert(result.stats.reallocations == 1);
+	assert(result.stats.frees == 1);
+	assert(result.stats.allocation_failures == 1);
 	assert(!host.callback_active[LP_COLLECTOR_MEMORY]);
 	assert(host.callback_active[LP_COLLECTOR_CPU]);
-	assert(lp_runtime_stop(runtime, LP_COLLECTOR_CPU,
+	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_CPU,
 		cpu_generation, &result) == LP_OK);
+	assert(result.stats.safe_points == 1);
+	assert(result.stats.pending_weight == 5);
+	assert(result.stats.state_c == 1);
 	assert(!host.callback_active[LP_COLLECTOR_CPU]);
 	assert(lp_runtime_model(runtime) == shared_model);
 
-	assert(lp_runtime_start(runtime, &cpu, &cpu_generation) == LP_OK);
-	assert(lp_runtime_start(runtime, &memory, &memory_generation) == LP_OK);
-	assert(lp_runtime_stop(runtime, LP_COLLECTOR_CPU,
+	assert(lp_runtime_start(runtime, state_identity, &cpu,
+		&cpu_generation) == LP_OK);
+	assert(lp_runtime_start(runtime, state_identity, &memory,
+		&memory_generation) == LP_OK);
+	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_CPU,
 		cpu_generation, &result) == LP_OK);
 	assert(host.callback_active[LP_COLLECTOR_MEMORY]);
-	assert(lp_runtime_stop(runtime, LP_COLLECTOR_MEMORY,
+	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
 		memory_generation, &result) == LP_OK);
 
 	host.fail_next_start = true;
-	assert(lp_runtime_start(runtime, &cpu, &cpu_generation) == LP_ERR_HOST);
+	assert(lp_runtime_start(runtime, state_identity, &cpu,
+		&cpu_generation) == LP_ERR_HOST);
 	assert(!lp_runtime_active(runtime, LP_COLLECTOR_CPU));
 	assert(!host.callback_active[LP_COLLECTOR_CPU]);
-	assert(lp_runtime_start(runtime, &cpu, &cpu_generation) == LP_OK);
-	assert(lp_runtime_start(runtime, &memory, &memory_generation) == LP_OK);
+	assert(lp_runtime_start(runtime, state_identity, &cpu,
+		&cpu_generation) == LP_OK);
+	assert(lp_runtime_start(runtime, state_identity, &memory,
+		&memory_generation) == LP_OK);
 
 	fake_host second_host = { 0 };
 	lp_runtime *second_runtime = lp_runtime_new(NULL, &ops, &second_host);
 	assert(second_runtime != NULL);
 	uint64_t second_generation = 0;
-	assert(lp_runtime_start(second_runtime, &cpu, &second_generation) == LP_OK);
+	assert(lp_runtime_start(second_runtime, NULL, &cpu,
+		&second_generation) == LP_OK);
 	assert(lp_runtime_active(runtime, LP_COLLECTOR_CPU));
 	assert(lp_runtime_active(second_runtime, LP_COLLECTOR_CPU));
 	lp_runtime_delete(second_runtime);

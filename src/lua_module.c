@@ -1,4 +1,5 @@
 #include "luaprof/runtime.h"
+#include "lua_bridge.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 
 typedef struct lp_runtime_holder {
 	lp_runtime *runtime;
+	lp_lua_bridge bridge;
 } lp_runtime_holder;
 
 typedef struct lp_lua_recorder {
@@ -46,11 +48,14 @@ runtime_holder(lua_State *L) {
 	lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
 	lua_State *main_state = lua_tothread(L, -1);
 	lua_pop(L, 1);
-	holder->runtime = lp_runtime_new(main_state, NULL, NULL);
+	lp_lua_bridge_init(&holder->bridge, main_state);
+	holder->runtime = lp_runtime_new(main_state, lp_lua_bridge_host_ops(),
+		&holder->bridge);
 	if (holder->runtime == NULL) {
 		luaL_error(L, "luaprof: out of memory");
 		return NULL;
 	}
+	lp_lua_bridge_bind(&holder->bridge, holder->runtime);
 	luaL_setmetatable(L, LP_RUNTIME_METATABLE);
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &runtime_registry_key);
@@ -145,7 +150,7 @@ start_recorder(lua_State *L, lp_collector_config config) {
 	lua_pushvalue(L, -2);
 	lua_setiuservalue(L, -2, 1);
 
-	lp_status status = lp_runtime_start(holder->runtime, &config,
+	lp_status status = lp_runtime_start(holder->runtime, L, &config,
 		&recorder->generation);
 	if (status != LP_OK) {
 		lua_pushnil(L);
@@ -178,7 +183,7 @@ recorder_stop(lua_State *L) {
 	}
 
 	lp_result_meta meta;
-	lp_status status = lp_runtime_stop(recorder->runtime, recorder->kind,
+	lp_status status = lp_runtime_stop(recorder->runtime, L, recorder->kind,
 		recorder->generation, &meta);
 	if (status != LP_OK) {
 		lua_pushnil(L);
@@ -200,7 +205,7 @@ recorder_gc(lua_State *L) {
 		LP_RECORDER_METATABLE);
 	if (recorder->active) {
 		lp_result_meta ignored;
-		(void)lp_runtime_stop(recorder->runtime, recorder->kind,
+		(void)lp_runtime_stop(recorder->runtime, L, recorder->kind,
 			recorder->generation, &ignored);
 		recorder->active = false;
 	}
@@ -229,6 +234,18 @@ result_stats(lua_State *L) {
 	lua_setfield(L, -2, "samples");
 	lua_pushboolean(L, false);
 	lua_setfield(L, -2, "active");
+	lua_pushinteger(L, (lua_Integer)result->meta.stats.safe_points);
+	lua_setfield(L, -2, "safe_points");
+	lua_pushinteger(L, (lua_Integer)result->meta.stats.pending_weight);
+	lua_setfield(L, -2, "pending_weight");
+	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_host);
+	lua_setfield(L, -2, "state_host");
+	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_lua);
+	lua_setfield(L, -2, "state_lua");
+	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_c);
+	lua_setfield(L, -2, "state_c");
+	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_gc);
+	lua_setfield(L, -2, "state_gc");
 	if (result->meta.kind == LP_COLLECTOR_MEMORY) {
 		lua_pushinteger(L,
 			(lua_Integer)result->meta.config.value.memory.sample_bytes);
@@ -236,6 +253,15 @@ result_stats(lua_State *L) {
 		lua_pushboolean(L,
 			result->meta.config.value.memory.track_free);
 		lua_setfield(L, -2, "track_free");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.allocations);
+		lua_setfield(L, -2, "allocation_events");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.reallocations);
+		lua_setfield(L, -2, "reallocation_events");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.frees);
+		lua_setfield(L, -2, "free_events");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.allocation_failures);
+		lua_setfield(L, -2, "allocation_failures");
 	}
 	return 1;
 }

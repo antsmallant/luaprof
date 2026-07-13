@@ -7,6 +7,7 @@ typedef struct lp_collector_slot {
 	bool active;
 	uint64_t generation;
 	lp_collector_config config;
+	lp_result_stats stats;
 } lp_collector_slot;
 
 struct lp_profile_model {
@@ -62,15 +63,15 @@ lp_runtime_delete(lp_runtime *runtime) {
 		slot->active = false;
 		if (runtime->host_ops.stop_collector != NULL) {
 			runtime->host_ops.stop_collector(runtime->host_userdata, runtime,
-				(lp_collector_kind)i, slot->generation);
+				runtime->main_state, (lp_collector_kind)i, slot->generation);
 		}
 	}
 	free(runtime);
 }
 
 lp_status
-lp_runtime_start(lp_runtime *runtime, const lp_collector_config *config,
-	uint64_t *generation) {
+lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
+	const lp_collector_config *config, uint64_t *generation) {
 	if (runtime == NULL || config == NULL || generation == NULL ||
 		!valid_kind(config->kind)) {
 		return LP_ERR_ARGUMENT;
@@ -98,7 +99,9 @@ lp_runtime_start(lp_runtime *runtime, const lp_collector_config *config,
 
 	if (runtime->host_ops.start_collector != NULL) {
 		lp_status status = runtime->host_ops.start_collector(
-			runtime->host_userdata, runtime, next, config);
+			runtime->host_userdata, runtime,
+			current_state == NULL ? runtime->main_state : current_state,
+			next, config);
 		if (status != LP_OK) {
 			memset(slot, 0, sizeof(*slot));
 			return status == LP_ERR_NOMEM ? status : LP_ERR_HOST;
@@ -110,8 +113,8 @@ lp_runtime_start(lp_runtime *runtime, const lp_collector_config *config,
 }
 
 lp_status
-lp_runtime_stop(lp_runtime *runtime, lp_collector_kind kind,
-	uint64_t generation, lp_result_meta *result) {
+lp_runtime_stop(lp_runtime *runtime, lua_State *current_state,
+	lp_collector_kind kind, uint64_t generation, lp_result_meta *result) {
 	if (runtime == NULL || result == NULL || !valid_kind(kind) ||
 		generation == 0) {
 		return LP_ERR_ARGUMENT;
@@ -131,15 +134,103 @@ lp_runtime_stop(lp_runtime *runtime, lp_collector_kind kind,
 	result->kind = kind;
 	result->generation = generation;
 	result->config = slot->config;
+	result->stats = slot->stats;
 
 	/* Reject new events before the host synchronously removes callbacks. */
 	slot->active = false;
 	if (runtime->host_ops.stop_collector != NULL) {
 		runtime->host_ops.stop_collector(runtime->host_userdata, runtime,
+			current_state == NULL ? runtime->main_state : current_state,
 			kind, generation);
 	}
 	memset(slot, 0, sizeof(*slot));
 	return LP_OK;
+}
+
+static uint64_t
+saturating_add(uint64_t value, uint64_t increment) {
+	return UINT64_MAX - value < increment ? UINT64_MAX : value + increment;
+}
+
+void
+lp_runtime_safe_point(lp_runtime *runtime, uint64_t generation,
+	lua_State *current_state, unsigned int pending) {
+	(void)current_state;
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_CPU];
+	if (!slot->active || slot->generation != generation || pending == 0) {
+		return;
+	}
+	slot->stats.safe_points = saturating_add(slot->stats.safe_points, 1);
+	slot->stats.pending_weight = saturating_add(slot->stats.pending_weight,
+		pending);
+}
+
+void
+lp_runtime_state_change(lp_runtime *runtime, uint64_t generation,
+	lua_State *current_state, lp_vm_state state,
+	lp_lua_cfunction cfunction) {
+	(void)current_state;
+	(void)cfunction;
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_CPU];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
+	uint64_t *counter = NULL;
+	switch (state) {
+	case LP_VM_HOST:
+		counter = &slot->stats.state_host;
+		break;
+	case LP_VM_LUA:
+		counter = &slot->stats.state_lua;
+		break;
+	case LP_VM_C:
+		counter = &slot->stats.state_c;
+		break;
+	case LP_VM_GC:
+		counter = &slot->stats.state_gc;
+		break;
+	default:
+		return;
+	}
+	*counter = saturating_add(*counter, 1);
+}
+
+void
+lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
+	lua_State *current_state, void *old_pointer, void *new_pointer,
+	size_t old_size, size_t new_size, bool success) {
+	(void)current_state;
+	(void)old_size;
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_MEMORY];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
+	uint64_t *counter;
+	if (!success) {
+		counter = &slot->stats.allocation_failures;
+	}
+	else if (old_pointer == NULL && new_pointer != NULL && new_size != 0) {
+		counter = &slot->stats.allocations;
+	}
+	else if (old_pointer != NULL && new_pointer == NULL && new_size == 0) {
+		counter = &slot->stats.frees;
+	}
+	else if (old_pointer != NULL && new_pointer != NULL && new_size != 0) {
+		counter = &slot->stats.reallocations;
+	}
+	else {
+		return;
+	}
+	*counter = saturating_add(*counter, 1);
 }
 
 bool
