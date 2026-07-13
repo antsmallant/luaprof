@@ -1,4 +1,5 @@
 #include "luaprof/runtime.h"
+#include "cpu_core.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -8,6 +9,7 @@ typedef struct lp_collector_slot {
 	uint64_t generation;
 	lp_collector_config config;
 	lp_result_stats stats;
+	lp_cpu_profile *cpu_profile;
 } lp_collector_slot;
 
 struct lp_profile_model {
@@ -60,11 +62,13 @@ lp_runtime_delete(lp_runtime *runtime) {
 		if (!slot->active) {
 			continue;
 		}
-		slot->active = false;
 		if (runtime->host_ops.stop_collector != NULL) {
 			runtime->host_ops.stop_collector(runtime->host_userdata, runtime,
 				runtime->main_state, (lp_collector_kind)i, slot->generation);
 		}
+		lp_cpu_profile_delete(slot->cpu_profile);
+		slot->cpu_profile = NULL;
+		slot->active = false;
 	}
 	free(runtime);
 }
@@ -78,6 +82,11 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 	}
 	if (config->kind == LP_COLLECTOR_MEMORY &&
 		config->value.memory.sample_bytes == 0) {
+		return LP_ERR_ARGUMENT;
+	}
+	if (config->kind == LP_COLLECTOR_CPU &&
+		(config->value.cpu.sample_hz == 0 ||
+			config->value.cpu.sample_hz > 10000)) {
 		return LP_ERR_ARGUMENT;
 	}
 	if (runtime->closing) {
@@ -96,6 +105,13 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 	slot->active = true;
 	slot->generation = next;
 	slot->config = *config;
+	if (config->kind == LP_COLLECTOR_CPU) {
+		slot->cpu_profile = lp_cpu_profile_new();
+		if (slot->cpu_profile == NULL) {
+			memset(slot, 0, sizeof(*slot));
+			return LP_ERR_NOMEM;
+		}
+	}
 
 	if (runtime->host_ops.start_collector != NULL) {
 		lp_status status = runtime->host_ops.start_collector(
@@ -103,6 +119,7 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 			current_state == NULL ? runtime->main_state : current_state,
 			next, config);
 		if (status != LP_OK) {
+			lp_cpu_profile_delete(slot->cpu_profile);
 			memset(slot, 0, sizeof(*slot));
 			return status == LP_ERR_NOMEM ? status : LP_ERR_HOST;
 		}
@@ -131,18 +148,21 @@ lp_runtime_stop(lp_runtime *runtime, lua_State *current_state,
 		return LP_ERR_STALE;
 	}
 
-	result->kind = kind;
-	result->generation = generation;
-	result->config = slot->config;
-	result->stats = slot->stats;
-
-	/* Reject new events before the host synchronously removes callbacks. */
-	slot->active = false;
+	/* The host disarms asynchronous producers and flushes owner-thread data. */
 	if (runtime->host_ops.stop_collector != NULL) {
 		runtime->host_ops.stop_collector(runtime->host_userdata, runtime,
 			current_state == NULL ? runtime->main_state : current_state,
 			kind, generation);
 	}
+	lp_cpu_profile_merge_stats(slot->cpu_profile, &slot->stats);
+	memset(result, 0, sizeof(*result));
+	result->kind = kind;
+	result->generation = generation;
+	result->config = slot->config;
+	result->stats = slot->stats;
+	result->private_data = slot->cpu_profile;
+	slot->cpu_profile = NULL;
+	slot->active = false;
 	memset(slot, 0, sizeof(*slot));
 	return LP_OK;
 }
@@ -231,6 +251,68 @@ lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 		return;
 	}
 	*counter = saturating_add(*counter, 1);
+}
+
+void
+lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
+	lp_vm_state state, lp_lua_cfunction cfunction,
+	const lp_stack_frame *frames, size_t depth, bool truncated,
+	uint64_t weight) {
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_CPU];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
+	lp_cpu_profile_record(slot->cpu_profile, state, cfunction, frames,
+		depth, truncated, weight);
+}
+
+void
+lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
+	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead) {
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_CPU];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
+	lp_cpu_profile_quality(slot->cpu_profile, dropped, unstable,
+		profiler_overhead);
+}
+
+void
+lp_result_meta_dispose(lp_result_meta *result) {
+	if (result == NULL) {
+		return;
+	}
+	lp_cpu_profile_delete(result->private_data);
+	result->private_data = NULL;
+}
+
+size_t
+lp_result_cpu_sample_count(const lp_result_meta *result) {
+	if (result == NULL || result->kind != LP_COLLECTOR_CPU) {
+		return 0;
+	}
+	return lp_cpu_profile_sample_count(result->private_data);
+}
+
+bool
+lp_result_cpu_sample(const lp_result_meta *result, size_t index,
+	lp_cpu_sample_view *sample) {
+	return result != NULL && result->kind == LP_COLLECTOR_CPU &&
+		lp_cpu_profile_sample(result->private_data, index, sample);
+}
+
+bool
+lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
+	size_t frame_index, lp_cpu_frame_view *frame) {
+	return result != NULL && result->kind == LP_COLLECTOR_CPU &&
+		lp_cpu_profile_frame(result->private_data, sample_index,
+			frame_index, frame);
 }
 
 bool

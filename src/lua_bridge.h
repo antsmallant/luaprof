@@ -5,6 +5,7 @@
 
 typedef struct lp_lua_bridge {
 	lp_runtime *runtime;
+	struct lp_thread_timer *cpu_timer;
 	lua_State *main_state;
 	uint64_t cpu_generation;
 	uint64_t memory_generation;

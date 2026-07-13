@@ -35,7 +35,7 @@ typedef enum lp_status {
 } lp_status;
 
 typedef struct lp_cpu_config {
-	uint32_t reserved;
+	uint32_t sample_hz;
 } lp_cpu_config;
 
 typedef struct lp_memory_config {
@@ -62,13 +62,58 @@ typedef struct lp_result_stats {
 	uint64_t reallocations;
 	uint64_t frees;
 	uint64_t allocation_failures;
+	uint64_t samples;
+	uint64_t sample_weight;
+	uint64_t sample_host;
+	uint64_t sample_lua;
+	uint64_t sample_c;
+	uint64_t sample_gc;
+	uint64_t dropped_events;
+	uint64_t unstable_events;
+	uint64_t profiler_overhead_events;
+	uint64_t stack_truncations;
+	uint64_t aggregate_overflows;
+	uint64_t symbol_overflows;
 } lp_result_stats;
+
+typedef enum lp_frame_kind {
+	LP_FRAME_LUA = 0,
+	LP_FRAME_C = 1
+} lp_frame_kind;
+
+typedef struct lp_stack_frame {
+	lp_frame_kind kind;
+	const void *function;
+	lp_lua_cfunction cfunction;
+	const char *source;
+	size_t source_length;
+	int linedefined;
+	int currentline;
+} lp_stack_frame;
+
+typedef struct lp_cpu_sample_view {
+	lp_vm_state state;
+	lp_lua_cfunction cfunction;
+	uint64_t weight;
+	size_t depth;
+} lp_cpu_sample_view;
+
+typedef struct lp_cpu_frame_view {
+	lp_frame_kind kind;
+	const void *function;
+	lp_lua_cfunction cfunction;
+	const char *source;
+	size_t source_length;
+	int linedefined;
+	int currentline;
+} lp_cpu_frame_view;
 
 typedef struct lp_result_meta {
 	lp_collector_kind kind;
 	uint64_t generation;
 	lp_collector_config config;
 	lp_result_stats stats;
+	void *private_data;
 } lp_result_meta;
 
 /*
@@ -104,6 +149,19 @@ void lp_runtime_state_change(lp_runtime *runtime, uint64_t generation,
 void lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 	lua_State *current_state, void *old_pointer, void *new_pointer,
 	size_t old_size, size_t new_size, bool success);
+void lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
+	lp_vm_state state, lp_lua_cfunction cfunction,
+	const lp_stack_frame *frames, size_t depth, bool truncated,
+	uint64_t weight);
+void lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
+	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead);
+
+void lp_result_meta_dispose(lp_result_meta *result);
+size_t lp_result_cpu_sample_count(const lp_result_meta *result);
+bool lp_result_cpu_sample(const lp_result_meta *result, size_t index,
+	lp_cpu_sample_view *sample);
+bool lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
+	size_t frame_index, lp_cpu_frame_view *frame);
 
 bool lp_runtime_active(const lp_runtime *runtime, lp_collector_kind kind);
 uint64_t lp_runtime_generation(const lp_runtime *runtime,

@@ -26,6 +26,8 @@ typedef struct bridge_stats {
 	int saw_coroutine_restore;
 	int saw_closethread_restore;
 	int saw_main_block_free;
+	int saw_lua_frame;
+	int saw_truncated_stack;
 	lua_State *last_event_state;
 } bridge_stats;
 
@@ -61,7 +63,27 @@ test_allocator(void *userdata, void *pointer, size_t old_size,
 static void
 safe_point(void *userdata, lua_State *L, unsigned int pending) {
 	bridge_stats *stats = userdata;
+	lua_ProfileFrame frames[8];
+	int truncated = 0;
+	size_t depth = lua_profile_capturestack(L, frames, 8, &truncated);
 	assert(pending != 0);
+	assert(depth != 0);
+	for (size_t i = 0; i < depth; ++i) {
+		if (frames[i].kind == LUA_PROFILE_FRAME_LUA) {
+			assert(frames[i].function != NULL);
+			assert(frames[i].source != NULL);
+			assert(frames[i].source_length != 0);
+			assert(frames[i].currentline > 0);
+			stats->saw_lua_frame = 1;
+		}
+		else {
+			assert(frames[i].kind == LUA_PROFILE_FRAME_C);
+			assert(frames[i].cfunction != NULL);
+		}
+	}
+	if (truncated) {
+		stats->saw_truncated_stack = 1;
+	}
 	stats->safe_calls++;
 	stats->safe_weight += pending;
 	if (L != stats->main_state) {
@@ -209,6 +231,11 @@ run_workload(lua_State *L) {
 		"  return 42\n"
 		"end\n"
 		"assert(call_lua(inner) == 42)\n"
+		"local function deep(n)\n"
+		"  if n == 0 then request_ticks(1); return 0 end\n"
+		"  return 1 + deep(n - 1)\n"
+		"end\n"
+		"assert(deep(20) == 20)\n"
 		"local ok = pcall(raise_from_c)\n"
 		"assert(not ok)\n"
 		"local co = coroutine.create(function()\n"
@@ -301,7 +328,9 @@ main(void) {
 	assert(lua_getprofilestate(L, &current) == LUA_PROFILE_HOST);
 	assert(current == NULL);
 	assert(stats.safe_calls >= 3);
-	assert(stats.safe_weight == 23);
+	assert(stats.safe_weight == 24);
+	assert(stats.saw_lua_frame);
+	assert(stats.saw_truncated_stack);
 	assert(stats.states[LUA_PROFILE_LUA] != 0);
 	assert(stats.states[LUA_PROFILE_C] != 0);
 	assert(stats.states[LUA_PROFILE_GC] != 0);

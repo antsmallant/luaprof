@@ -1,4 +1,5 @@
 #include "lua_bridge.h"
+#include "thread_timer.h"
 
 #include <string.h>
 
@@ -8,18 +9,65 @@ _Static_assert(LUA_PROFILE_HOST == LP_VM_HOST, "profile state mismatch");
 _Static_assert(LUA_PROFILE_LUA == LP_VM_LUA, "profile state mismatch");
 _Static_assert(LUA_PROFILE_C == LP_VM_C, "profile state mismatch");
 _Static_assert(LUA_PROFILE_GC == LP_VM_GC, "profile state mismatch");
+_Static_assert(LUA_PROFILE_FRAME_LUA == LP_FRAME_LUA,
+	"profile frame mismatch");
+_Static_assert(LUA_PROFILE_FRAME_C == LP_FRAME_C,
+	"profile frame mismatch");
+
+#define LP_CAPTURE_STACK_DEPTH 64u
+
+static void
+record_timer_quality(lp_lua_bridge *bridge) {
+	uint64_t dropped = 0;
+	uint64_t unstable = 0;
+	uint64_t profiler_overhead = 0;
+	lp_thread_timer_take_quality(bridge->cpu_timer, &dropped, &unstable,
+		&profiler_overhead);
+	lp_runtime_cpu_quality(bridge->runtime, bridge->cpu_generation, dropped,
+		unstable, profiler_overhead);
+}
+
+static void
+drain_timer(lp_lua_bridge *bridge) {
+	lp_tick_event event;
+	while (lp_thread_timer_next(bridge->cpu_timer, &event)) {
+		lua_ProfileFrame captured[LP_CAPTURE_STACK_DEPTH];
+		lp_stack_frame frames[LP_CAPTURE_STACK_DEPTH];
+		int truncated = 0;
+		size_t depth = lua_profile_capturestack(event.state, captured,
+			LP_CAPTURE_STACK_DEPTH, &truncated);
+		for (size_t i = 0; i < depth; ++i) {
+			frames[i].kind = (lp_frame_kind)captured[i].kind;
+			frames[i].function = captured[i].function;
+			frames[i].cfunction = captured[i].cfunction;
+			frames[i].source = captured[i].source;
+			frames[i].source_length = captured[i].source_length;
+			frames[i].linedefined = captured[i].linedefined;
+			frames[i].currentline = captured[i].currentline;
+		}
+		lp_runtime_cpu_sample(bridge->runtime, bridge->cpu_generation,
+			event.vm_state, event.cfunction, frames, depth,
+			truncated != 0, event.weight);
+	}
+	record_timer_quality(bridge);
+}
 
 static void
 safe_point(void *userdata, lua_State *L, unsigned int pending) {
 	lp_lua_bridge *bridge = userdata;
+	lp_thread_timer_begin_collection(bridge->cpu_timer);
 	lp_runtime_safe_point(bridge->runtime, bridge->cpu_generation, L,
 		pending);
+	drain_timer(bridge);
+	lp_thread_timer_end_collection(bridge->cpu_timer);
 }
 
 static void
 state_change(void *userdata, lua_State *L, int state,
 	lua_CFunction cfunction) {
 	lp_lua_bridge *bridge = userdata;
+	lp_thread_timer_publish(bridge->cpu_timer, L, (lp_vm_state)state,
+		cfunction);
 	lp_runtime_state_change(bridge->runtime, bridge->cpu_generation, L,
 		(lp_vm_state)state, cfunction);
 }
@@ -58,6 +106,10 @@ start_collector(void *userdata, lp_runtime *runtime,
 	lp_lua_bridge *bridge = userdata;
 	(void)runtime;
 	if (config->kind == LP_COLLECTOR_CPU) {
+		bridge->cpu_timer = lp_thread_timer_new();
+		if (bridge->cpu_timer == NULL) {
+			return LP_ERR_NOMEM;
+		}
 		bridge->cpu_active = true;
 		bridge->cpu_generation = generation;
 	}
@@ -66,6 +118,18 @@ start_collector(void *userdata, lp_runtime *runtime,
 		bridge->memory_generation = generation;
 	}
 	apply_hooks(bridge, current_state);
+	if (config->kind == LP_COLLECTOR_CPU) {
+		lp_status status = lp_thread_timer_arm(bridge->cpu_timer,
+			config->value.cpu.sample_hz);
+		if (status != LP_OK) {
+			bridge->cpu_active = false;
+			bridge->cpu_generation = 0;
+			apply_hooks(bridge, current_state);
+			lp_thread_timer_delete(bridge->cpu_timer);
+			bridge->cpu_timer = NULL;
+			return status;
+		}
+	}
 	return LP_OK;
 }
 
@@ -75,6 +139,8 @@ stop_collector(void *userdata, lp_runtime *runtime,
 	lp_lua_bridge *bridge = userdata;
 	(void)runtime;
 	if (kind == LP_COLLECTOR_CPU && bridge->cpu_generation == generation) {
+		lp_thread_timer_disarm(bridge->cpu_timer);
+		drain_timer(bridge);
 		bridge->cpu_active = false;
 		bridge->cpu_generation = 0;
 	}
@@ -84,6 +150,10 @@ stop_collector(void *userdata, lp_runtime *runtime,
 		bridge->memory_generation = 0;
 	}
 	apply_hooks(bridge, current_state);
+	if (kind == LP_COLLECTOR_CPU) {
+		lp_thread_timer_delete(bridge->cpu_timer);
+		bridge->cpu_timer = NULL;
+	}
 }
 
 void
