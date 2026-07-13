@@ -284,6 +284,12 @@ result_stats(lua_State *L) {
 			(lua_Integer)result->meta.stats.profiler_overhead_events);
 		lua_setfield(L, -2, "profiler_overhead_events");
 		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.stale_events);
+		lua_setfield(L, -2, "stale_events");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.scheduler_workers);
+		lua_setfield(L, -2, "scheduler_workers");
+		lua_pushinteger(L,
 			(lua_Integer)result->meta.stats.stack_truncations);
 		lua_setfield(L, -2, "stack_truncations");
 		lua_pushinteger(L,

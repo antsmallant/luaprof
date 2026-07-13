@@ -6,8 +6,10 @@
 typedef struct lp_lua_bridge {
 	lp_runtime *runtime;
 	struct lp_thread_timer *cpu_timer;
+	const struct lp_skynet_host_api *scheduler_api;
 	lua_State *main_state;
 	uint64_t cpu_generation;
+	uint64_t scheduler_token;
 	uint64_t memory_generation;
 	bool cpu_active;
 	bool memory_active;

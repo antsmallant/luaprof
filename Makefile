@@ -8,11 +8,16 @@ INCLUDE_DIR := $(ROOT)/include
 RUNTIME_SOURCE := src/runtime.c
 CPU_CORE_SOURCE := src/cpu_core.c
 THREAD_TIMER_SOURCE := src/thread_timer.c
+SKYNET_BACKEND_SOURCE := src/skynet_backend.c
+SKYNET_HOST_SOURCE := src/skynet_host.c
 LUA_MODULE_SOURCE := src/lua_module.c
 LUA_BRIDGE_SOURCE := src/lua_bridge.c
 RUNTIME_OBJECT := $(BUILD_DIR)/runtime.o
 CPU_CORE_OBJECT := $(BUILD_DIR)/cpu_core.o
 THREAD_TIMER_OBJECT := $(BUILD_DIR)/thread_timer.o
+SKYNET_BACKEND_OBJECT := $(BUILD_DIR)/skynet_backend.o
+SKYNET_HOST_OBJECT := $(BUILD_DIR)/skynet_host.o
+SKYNET_HOST_LIB := $(BUILD_DIR)/libluaprof-skynet-host.a
 LUA_MODULE_OBJECT := $(BUILD_DIR)/lua_module.o
 LUA_BRIDGE_OBJECT := $(BUILD_DIR)/lua_bridge.o
 LUA_MODULE := $(BUILD_DIR)/luaprof.so
@@ -21,16 +26,18 @@ DISABLED_BENCH := $(BUILD_DIR)/disabled-runtime-bench
 VM_SAFE_POINT_BENCH := $(BUILD_DIR)/vm-safe-point-bench
 VM_BRIDGE_TEST := $(BUILD_DIR)/vm-bridge-test
 CPU_SAMPLING_TEST := $(BUILD_DIR)/cpu-sampling-test
+SCHEDULER_SAMPLING_TEST := $(BUILD_DIR)/scheduler-sampling-test
 CPU_CORE_TEST := $(BUILD_DIR)/cpu-core-test
 
 CC ?= cc
+AR ?= ar
 CFLAGS ?= -O2 -g
 CPPFLAGS ?=
 LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-disabled bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-cpu-core test-cpu-sampling test-runtime test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-disabled bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-cpu-core test-cpu-sampling test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -62,16 +69,27 @@ $(THREAD_TIMER_OBJECT): $(THREAD_TIMER_SOURCE) src/thread_timer.h include/luapro
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc -c $< -o $@
 
+$(SKYNET_BACKEND_OBJECT): $(SKYNET_BACKEND_SOURCE) src/skynet_backend.h include/luaprof/skynet_host.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
+		-I$(INCLUDE_DIR) -Isrc -c $< -o $@
+
+$(SKYNET_HOST_OBJECT): $(SKYNET_HOST_SOURCE) include/luaprof/skynet_host.h $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -c $< -o $@
+
+$(SKYNET_HOST_LIB): $(SKYNET_HOST_OBJECT)
+	$(AR) rcs $@ $^
+
 $(LUA_MODULE_OBJECT): $(LUA_MODULE_SOURCE) include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -c $< -o $@
 
-$(LUA_BRIDGE_OBJECT): $(LUA_BRIDGE_SOURCE) src/lua_bridge.h src/thread_timer.h include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
+$(LUA_BRIDGE_OBJECT): $(LUA_BRIDGE_SOURCE) src/lua_bridge.h src/skynet_backend.h src/thread_timer.h include/luaprof/runtime.h include/luaprof/skynet_host.h $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc -c $< -o $@
 
-$(LUA_MODULE): $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_MODULE_OBJECT)
-	$(CC) $(LDFLAGS) -shared $^ $(LDLIBS) -pthread -lrt -o $@
+$(LUA_MODULE): $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_MODULE_OBJECT)
+	$(CC) $(LDFLAGS) -shared $^ $(LDLIBS) -ldl -pthread -lrt -o $@
 
 $(RUNTIME_TEST): tests/unit/runtime_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
@@ -93,10 +111,15 @@ $(VM_BRIDGE_TEST): tests/integration/vm_bridge_test.c $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(LUA_SRC) $(LDFLAGS) $< $(LUA_LIB) $(LDLIBS) -lm -ldl -o $@
 
-$(CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+$(CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
 		-lm -ldl -pthread -lrt -o $@
+
+$(SCHEDULER_SAMPLING_TEST): tests/integration/scheduler_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(SKYNET_HOST_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) -Wl,-E $^ \
+		$(LDLIBS) -lm -ldl -pthread -lrt -o $@
 
 $(LUA_LIB): lua
 
@@ -104,7 +127,7 @@ thread-vm: $(BUILD_DIR)/thread-vm-smoke
 
 module: $(LUA_MODULE)
 
-test: test-thread-vm test-runtime test-cpu-core test-api test-vm-bridge test-cpu-sampling
+test: test-thread-vm test-runtime test-cpu-core test-api test-vm-bridge test-cpu-sampling test-scheduler-sampling
 
 test-thread-vm: thread-vm
 	./tests/integration/thread_vm.sh
@@ -124,16 +147,20 @@ test-vm-bridge: $(VM_BRIDGE_TEST)
 test-cpu-sampling: $(CPU_SAMPLING_TEST)
 	$(CPU_SAMPLING_TEST)
 
+test-scheduler-sampling: $(SCHEDULER_SAMPLING_TEST)
+	$(SCHEDULER_SAMPLING_TEST)
+
 bench-disabled: $(DISABLED_BENCH)
 	$(DISABLED_BENCH)
 
 bench-vm: $(VM_SAFE_POINT_BENCH)
 	$(VM_SAFE_POINT_BENCH)
 
-skynet: submodule-skynet $(LUA_LIB)
+skynet: submodule-skynet module $(SKYNET_HOST_LIB)
 	$(MAKE) -C $(SKYNET_DIR) linux \
 		LUA_INC=$(LUA_SRC) LUA_LIB=$(LUA_LIB) \
-		MALLOC_STATICLIB= SKYNET_DEFINES=-DNOUSE_JEMALLOC
+		LUAPROF_HOST_LIB=$(SKYNET_HOST_LIB) MALLOC_STATICLIB= \
+		SKYNET_DEFINES="-DNOUSE_JEMALLOC -DSKYNET_LUAPROF -I$(INCLUDE_DIR)"
 
 test-skynet: skynet
 	./tests/integration/skynet.sh

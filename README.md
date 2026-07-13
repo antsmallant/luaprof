@@ -3,9 +3,9 @@
 Sampling profiler for PUC Lua 5.4.8. CPU and memory recorders are independent;
 Skynet is a supported host integration, not a core dependency.
 
-The profiler implementation is under development. Linux thread-per-VM hosts can
-already collect CPU samples through a thread CPU-time timer. The Skynet build is
-validated, but its scheduler-aware sampling backend is not implemented yet.
+The profiler implementation is under development. Linux thread-per-VM hosts and
+Skynet services can collect CPU samples through thread CPU-time timers. The
+Skynet backend tracks the target VM across worker dispatches.
 
 ## Build the default host
 
@@ -55,7 +55,11 @@ recorder does not affect the other. The Linux thread-per-VM backend also permits
 only one active CPU timer on an OS thread. It uses thread CPU time, so sleeping
 does not produce samples.
 
+Skynet owns one timer per worker and publishes a target only while its service
+callback is running. Multiple Skynet CPU recorders may run concurrently, but
+they currently must use the same `sample_hz`.
+
 CPU results currently expose aggregate and quality counters through the C API,
-with lifecycle metadata available through Lua `result:stats()`. Memory sampling,
-the Skynet scheduler backend, and pprof export are implemented in later
+with lifecycle and scheduler quality metadata available through Lua
+`result:stats()`. Memory sampling and pprof export are implemented in later
 milestones.

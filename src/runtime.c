@@ -284,6 +284,23 @@ lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
 }
 
 void
+lp_runtime_cpu_scheduler_quality(lp_runtime *runtime, uint64_t generation,
+	uint64_t stale, uint64_t workers) {
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_CPU];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
+	slot->stats.stale_events = saturating_add(slot->stats.stale_events,
+		stale);
+	if (workers > slot->stats.scheduler_workers) {
+		slot->stats.scheduler_workers = workers;
+	}
+}
+
+void
 lp_result_meta_dispose(lp_result_meta *result) {
 	if (result == NULL) {
 		return;
