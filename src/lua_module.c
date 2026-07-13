@@ -445,7 +445,7 @@ luaopen_luaprof(lua_State *L) {
 	lua_pop(L, 1);
 
 	lua_createtable(L, 0, 3);
-	lua_pushliteral(L, "0.1.0-dev");
+	lua_pushliteral(L, "0.1.0");
 	lua_setfield(L, -2, "_VERSION");
 
 	lua_createtable(L, 0, 1);

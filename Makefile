@@ -47,7 +47,7 @@ LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-combined bench-disabled bench-memory bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-combined-sampling test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-combined bench-disabled bench-memory bench-vm example-skynet example-thread-vm lua module skynet submodule-lua submodule-skynet test test-api test-combined-sampling test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -172,6 +172,12 @@ thread-vm: $(BUILD_DIR)/thread-vm-smoke
 
 module: $(LUA_MODULE)
 
+example-thread-vm: module
+	LUA_CPATH="$(BUILD_DIR)/?.so;;" $(LUA_SRC)/lua \
+		examples/thread_vm/profile.lua \
+		$(BUILD_DIR)/thread-vm-cpu.pb.gz \
+		$(BUILD_DIR)/thread-vm-heap.pb.gz
+
 test: test-thread-vm test-runtime test-cpu-core test-memory-core test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
 test-thread-vm: thread-vm
@@ -227,3 +233,5 @@ skynet: submodule-skynet module $(SKYNET_HOST_LIB)
 
 test-skynet: skynet
 	./tests/integration/skynet.sh
+
+example-skynet: test-skynet

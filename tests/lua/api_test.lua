@@ -1,5 +1,6 @@
 local profile = require "luaprof"
 
+assert(profile._VERSION == "0.1.0")
 assert(type(profile.cpu.start) == "function")
 assert(type(profile.memory.start) == "function")
 assert(profile.start == nil)
@@ -59,9 +60,18 @@ assert(default_stats.inuse_objects == 0)
 local cpu_first = assert(profile.cpu.start())
 local memory_second = assert(profile.memory.start { sample_bytes = 1 })
 assert(cpu_first:stop():stats().kind == "cpu")
+local function grow_stack(depth)
+    if depth == 0 then
+        return {}
+    end
+    local result = grow_stack(depth - 1)
+    return result
+end
+assert(type(grow_stack(400)) == "table")
 local exact_stats = assert(memory_second:stop()):stats()
 assert(exact_stats.kind == "memory")
 assert(exact_stats.samples > 0)
+assert(exact_stats.stack_truncations > 0)
 assert(exact_stats.alloc_space == exact_stats.sampled_alloc_bytes)
 assert(exact_stats.alloc_objects == exact_stats.samples)
 assert(exact_stats.inuse_space == 0)

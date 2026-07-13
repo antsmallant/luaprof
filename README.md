@@ -1,41 +1,57 @@
 # luaprof
 
-Sampling profiler for PUC Lua 5.4.8. CPU and memory recorders are independent;
-Skynet is a supported host integration, not a core dependency.
+`luaprof` is a sampling profiler for PUC Lua 5.4.8. CPU and memory
+recorders are independent, and the same API works in Linux thread-per-VM hosts
+and supported Skynet services. V1 intentionally does not include call/return
+tracing.
 
-The profiler implementation is under development. Linux thread-per-VM hosts and
-Skynet services can collect CPU samples through thread CPU-time timers. The
-Skynet backend tracks the target VM across worker dispatches. Memory recorders
-collect requested alloc-space with allocation-proportional sampling.
+## Requirements
 
-## Build the default host
+- Linux with POSIX per-thread CPU timers and lock-free pointer, integer and
+  64-bit atomics
+- A C11 compiler, GNU Make, POSIX threads and zlib development files
+- The pinned `lua-5.4.8` fork in `3rd/`; stock Lua does not expose the required
+  profiling bridge
+- GitHub SSH access for initializing the configured submodule URLs
+- Go's `pprof` command for reading the default output; Graphviz is additionally
+  required for SVG and graph-based web reports
 
-The default build initializes only the required Lua submodule and builds a
-minimal thread-per-VM program. A C11 toolchain, POSIX threads and zlib development
-files are required:
+The profiler core does not depend on Skynet. Skynet support is an explicit host
+integration through the pinned fork in `integration/skynet`.
+
+## Quick start
 
 ```sh
+git clone --recurse-submodules git@github.com:antsmallant/luaprof.git
+cd luaprof
 make
 make test
+make example-thread-vm
 ```
 
-## Build the Skynet integration
+The example runs CPU and in-use memory recorders together, stops memory first,
+continues CPU profiling, and writes:
 
-The explicit integration target initializes Skynet and links it against the
-parent project's Lua submodule:
+```text
+build/thread-vm-cpu.pb.gz
+build/thread-vm-heap.pb.gz
+```
+
+Inspect them with standard pprof tooling:
 
 ```sh
-make skynet
-make test-skynet
+go tool pprof -top build/thread-vm-cpu.pb.gz
+go tool pprof -sample_index=alloc_space -top build/thread-vm-heap.pb.gz
+go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 ```
 
-Both submodules use their `luaprof` branches. The parent repository records
-exact gitlinks; the configured branch names are for intentional remote updates,
-not floating builds.
+`make` initializes only the required Lua submodule. A clone without
+`--recurse-submodules` therefore also works. `make test` runs the core,
+thread-per-VM and exporter tests; Skynet is tested separately.
 
-## Recorder lifecycle
+## Lua API
 
-The V1 API uses independent recorder handles:
+Start each recorder directly. There is no shared `profile.start()` mode table:
 
 ```lua
 local profile = require "luaprof"
@@ -48,46 +64,106 @@ local memory = assert(profile.memory.start {
     track_free = true,
 })
 
-local cpu_result = assert(cpu:stop())
+-- Run the workload here.
+
 local memory_result = assert(memory:stop())
+-- CPU profiling is still active here.
+local cpu_result = assert(cpu:stop())
+
+assert(cpu_result:write("cpu.pb.gz"))
+assert(memory_result:write("heap.pb.gz"))
 ```
 
-Only one recorder of each kind may be active in a Lua VM. Stopping either
-recorder does not affect the other. The Linux thread-per-VM backend also permits
-only one active CPU timer on an OS thread. It uses thread CPU time, so sleeping
-does not produce samples.
+`profile.cpu.start([options])` accepts `sample_hz`, an integer from 1 to 10000.
+The default is 100Hz. It measures on-thread CPU time, so sleeping does not
+produce samples.
 
-Skynet owns one timer per worker and publishes a target only while its service
-callback is running. Multiple Skynet CPU recorders may run concurrently, but
-they currently must use the same `sample_hz`.
+`profile.memory.start([options])` accepts a positive integer `sample_bytes` and
+a boolean `track_free`. The defaults are 512KiB and `false`. `sample_bytes = 1`
+records every successful allocation and realloc.
 
-CPU results currently expose aggregate and quality counters through the C API,
-with lifecycle and scheduler quality metadata available through Lua
-`result:stats()`.
+Only one recorder of each kind may be active in a Lua VM, but CPU and memory may
+run and stop independently. A recorder's `__gc` and `__close` methods stop and
+discard an active recording; call `stop()` explicitly when the result is
+needed. A stopped result owns a frozen profile and supports:
 
-Memory sampling uses geometrically distributed byte intervals whose mean is
-`sample_bytes`. A successful allocation or realloc consumes its full requested
-new size; frees and failed reallocs do not consume the sampling budget. Each
-event produces at most one sample. Samples are probability-weighted to estimate
-`alloc_space` and `alloc_objects`, while `sampled_alloc_bytes` and `samples`
-report raw observations. Setting `sample_bytes = 1` records every successful
-allocation and realloc.
+- `result:stats()` to return counters and quality metadata
+- `result:write(path[, options])` to export pprof or folded stacks
 
-With `track_free = false`, the recorder does not allocate or query a live-pointer
-map and reports alloc-space only. With `track_free = true`, sampled live blocks
-are tracked until a matching free or successful realloc and are reported as
-`inuse_space` and `inuse_objects` on their original allocation stacks. Failed
-reallocs leave the old block live; successful reallocs end the old sampled block
-and treat the complete new block as a new allocation sample. Free-site,
-lifetime, peak and object-timeline profiling are intentionally not collected.
+Unknown options and invalid option types raise Lua argument errors. Host or
+lifecycle failures return `nil, error`.
 
-The live map is preallocated for 16384 sampled blocks. Additional sampled live
-blocks still contribute alloc-space but not in-use values, and are reported by
-`live_map_overflows`.
+## CPU sampling
 
-## Export results
+The thread-per-VM backend uses `CLOCK_THREAD_CPUTIME_ID`. A timer tick records a
+small VM state snapshot without walking Lua or native stacks in the signal
+handler. At the next VM safe point, the recorder drains pending ticks and
+captures the Lua stack.
 
-`result:write()` writes a gzip-compressed `profile.proto` file by default:
+Ticks in a long C call retain the `lua_CFunction` pointer and the Lua caller.
+The exporter names the leaf `lua_CFunction@0x...`; it does not require native
+symbols and does not claim to reconstruct the native C stack. GC and host states
+are emitted as synthetic frames. This is sufficient to locate which Lua call
+entered expensive C code, but native hot lines require a separate native
+profiler.
+
+Important CPU statistics are:
+
+- `samples`: attributed timer-tick weight, including timer overruns
+- `sample_lua`, `sample_c`, `sample_gc`, `sample_host`: tick weight by VM state
+- `safe_points`, `pending_weight`: safe-point drain count and requested weight
+- `state_lua`, `state_c`, `state_gc`, `state_host`: VM state transition counts
+- `dropped_events`: ticks lost because a fixed event ring was full
+- `unstable_events`: ticks rejected during an execution-slot publication race
+- `profiler_overhead_events`: ticks arriving while profile data was collected
+- `stale_events`, `scheduler_workers`: Skynet generation rejects and workers
+  observed for the target
+- `stack_truncations`, `aggregate_overflows`, `symbol_overflows`: bounded-store
+  quality counters
+
+For a healthy profile, compare `samples` with the duration and configured
+frequency, inspect the state split, and require drop/overflow counters to be
+negligible. Short profiles can contain too few samples to support a conclusion.
+
+## Memory sampling
+
+Allocation intervals follow a geometric distribution whose expected byte
+distance is `sample_bytes`. An allocation is selected in proportion to its full
+requested new size, produces at most one sample, and is inverse-probability
+weighted to estimate allocation bytes and objects. Frees and failed reallocs do
+not consume the sampling budget. A successful realloc is treated as ending the
+old block and allocating its complete new requested size.
+
+Memory statistics separate observations from estimates:
+
+- `allocation_events`, `reallocation_events`, `free_events` and
+  `allocation_failures`: exact allocator event counts while recording
+- `samples`, `sampled_alloc_bytes`: raw selected-event count and requested bytes
+- `alloc_space`, `alloc_objects`: probability-weighted allocation estimates
+- `inuse_space`, `inuse_objects`: weighted sampled blocks still live at stop
+- `live_map_overflows`: sampled live blocks omitted from in-use tracking
+- `stack_truncations`, `aggregate_overflows`, `symbol_overflows`: bounded-store
+  quality counters
+
+With `track_free = false`, no live-pointer map is allocated or queried and the
+in-use metrics remain zero. With `track_free = true`, only sampled live blocks
+are stored and frees are attributed back to their allocation stacks. Free-site,
+lifetime, peak and object-timeline profiles are not collected.
+
+When Lua is reallocating its own VM stack, call-frame pointers are temporarily
+unavailable. A selected stack-reallocation event still contributes to the
+memory metrics, but is stored with an empty stack and increments
+`stack_truncations` instead of traversing invalid VM state.
+
+These are requested allocator sizes, not RSS, physical memory or a VM heap
+snapshot. `sample_bytes = 1` gives exact requested alloc-space and in-use values;
+larger intervals are statistical estimates. Increasing the interval reduces
+stack-capture work but raises variance, especially for short profiles and
+in-use object counts.
+
+## Export formats
+
+The default format is gzip-compressed Google `profile.proto`:
 
 ```lua
 assert(cpu_result:write("cpu.pb.gz"))
@@ -98,24 +174,18 @@ assert(memory_result:write("heap.pb.gz", {
 
 CPU profiles contain `samples/count` and `cpu/nanoseconds`. Memory profiles
 contain `alloc_objects/count`, `alloc_space/bytes`, `inuse_objects/count` and
-`inuse_space/bytes`. `sample` selects the default metric; it defaults to `cpu`,
-`alloc_space` when free tracking is disabled, and `inuse_space` when enabled.
-Lua frames are named from source and definition line. Native C symbol lookup is
-not required: C frames are emitted as `lua_CFunction@0x...`.
+`inuse_space/bytes`. The default sample is `cpu`, `alloc_space` when free
+tracking is disabled, and `inuse_space` when it is enabled.
 
-The files can be read by Google pprof, for example:
+Examples of alternate reports are:
 
 ```sh
-go tool pprof -top cpu.pb.gz
-go tool pprof -sample_index=alloc_space -top heap.pb.gz
+go tool pprof -text cpu.pb.gz
 go tool pprof -sample_index=inuse_space -svg heap.pb.gz > heap.svg
 go tool pprof -http=:0 heap.pb.gz
 ```
 
-SVG output requires Graphviz (`dot`); the interactive web view may also invoke
-Graphviz for graph reports.
-
-Folded stacks are available for flame graph tooling:
+Folded root-to-leaf stacks are also available for flame graph tooling:
 
 ```lua
 assert(memory_result:write("heap.folded", {
@@ -123,3 +193,67 @@ assert(memory_result:write("heap.folded", {
     sample = "inuse_space",
 }))
 ```
+
+## Skynet integration
+
+Build and run the two-worker example explicitly:
+
+```sh
+make example-skynet
+```
+
+The service in `examples/skynet/luaprof_smoke.lua` starts CPU and in-use memory
+recorders together and validates that CPU continues after memory stops. The
+Skynet fork links a small host library into the executable, publishes the target
+VM at service dispatch boundaries and maintains one CPU timer per worker.
+
+Multiple Skynet services may record CPU concurrently, but all active CPU
+recorders currently must use the same `sample_hz`. Service migration, stale
+ticks, worker shutdown and concurrent stop are covered by the scheduler tests.
+
+## Fixed bounds
+
+Hot-path storage is preallocated and does not grow during recording:
+
+| Resource | Bound per recorder or host |
+| --- | ---: |
+| Captured stack depth | 64 frames |
+| CPU symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
+| Memory symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
+| Sampled live blocks with `track_free` | 16384 |
+| Thread or Skynet timer event ring | 4096 entries |
+| Thread timers / Skynet targets / Skynet workers | 64 / 128 / 64 |
+
+Source names longer than 1024 bytes are truncated. When a bound is reached,
+recording remains bounded and the corresponding drop, truncation or overflow
+counter increases. Exporting happens after stop and may allocate memory.
+
+## Supported scope
+
+- PUC Lua 5.4.8 at the exact parent-repository gitlink
+- Linux thread-per-VM hosts where a VM remains on its owner OS thread
+- The pinned Skynet fork, where a VM may move serially between workers
+- Lua and coroutine stacks up to the documented fixed depth
+
+Stock Lua, other Lua versions, Windows/macOS, native C stack unwinding, tracing,
+allocation timelines and VM object snapshots are outside V1.
+
+## Submodule development
+
+The parent repository pins exact Lua and Skynet commits. The `branch = luaprof`
+entries only identify the collaboration branches; normal builds never float to
+their latest remote commits.
+
+When changing a fork, commit and push it first, then update the parent gitlink:
+
+```sh
+git -C 3rd/lua-5.4.8 switch luaprof
+git -C 3rd/lua-5.4.8 add src/lprofile.c
+git -C 3rd/lua-5.4.8 commit -m "describe the Lua change"
+git -C 3rd/lua-5.4.8 push origin luaprof
+git add 3rd/lua-5.4.8
+git commit -m "build: update Lua submodule"
+```
+
+Use the same sequence for `integration/skynet`. A fresh checkout should use
+`git submodule update --init --recursive` to restore the exact pinned commits.
