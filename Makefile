@@ -25,6 +25,7 @@ LUA_BRIDGE_OBJECT := $(BUILD_DIR)/lua_bridge.o
 LUA_MODULE := $(BUILD_DIR)/luaprof.so
 RUNTIME_TEST := $(BUILD_DIR)/runtime-test
 DISABLED_BENCH := $(BUILD_DIR)/disabled-runtime-bench
+MEMORY_TRACKING_BENCH := $(BUILD_DIR)/memory-tracking-bench
 VM_SAFE_POINT_BENCH := $(BUILD_DIR)/vm-safe-point-bench
 VM_BRIDGE_TEST := $(BUILD_DIR)/vm-bridge-test
 CPU_SAMPLING_TEST := $(BUILD_DIR)/cpu-sampling-test
@@ -41,7 +42,7 @@ LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-disabled bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-disabled bench-memory bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -115,6 +116,10 @@ $(DISABLED_BENCH): tests/bench/disabled_runtime.c $(RUNTIME_OBJECT) $(CPU_CORE_O
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(INCLUDE_DIR) $(LDFLAGS) $^ $(LDLIBS) -lm -o $@
 
+$(MEMORY_TRACKING_BENCH): tests/bench/memory_tracking.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(INCLUDE_DIR) $(LDFLAGS) $^ $(LDLIBS) -lm -o $@
+
 $(VM_SAFE_POINT_BENCH): tests/bench/vm_safe_point.c $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(LUA_SRC) $(LDFLAGS) $< $(LUA_LIB) $(LDLIBS) -lm -ldl -o $@
@@ -175,6 +180,9 @@ test-scheduler-sampling: $(SCHEDULER_SAMPLING_TEST)
 
 bench-disabled: $(DISABLED_BENCH)
 	$(DISABLED_BENCH)
+
+bench-memory: $(MEMORY_TRACKING_BENCH)
+	$(MEMORY_TRACKING_BENCH)
 
 bench-vm: $(VM_SAFE_POINT_BENCH)
 	$(VM_SAFE_POINT_BENCH)

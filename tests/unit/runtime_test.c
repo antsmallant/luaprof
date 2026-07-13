@@ -140,14 +140,14 @@ main(void) {
 		NULL, &host, 64, true, &weighted_space, &weighted_objects));
 	assert(weighted_space == 64);
 	assert(weighted_objects == 1);
-	lp_runtime_memory_sample(runtime, memory_generation, frames, 2, false,
-		64, weighted_space, weighted_objects);
+	lp_runtime_memory_sample(runtime, memory_generation, &host, frames, 2,
+		false, 64, weighted_space, weighted_objects);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		&host, &host, 64, 128, true);
 	assert(lp_runtime_memory_sample_candidate(runtime, memory_generation,
 		&host, &host, 128, true, &weighted_space, &weighted_objects));
-	lp_runtime_memory_sample(runtime, memory_generation, frames, 2, false,
-		128, weighted_space, weighted_objects);
+	lp_runtime_memory_sample(runtime, memory_generation, &host, frames, 2,
+		false, 128, weighted_space, weighted_objects);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		&host, NULL, 128, 0, true);
 	assert(!lp_runtime_memory_sample_candidate(runtime, memory_generation,
@@ -161,8 +161,8 @@ main(void) {
 	assert(lp_runtime_memory_sample_candidate(runtime, memory_generation,
 		&host, state_identity, 256, true, &weighted_space,
 		&weighted_objects));
-	lp_runtime_memory_sample(runtime, memory_generation, frames, 2, false,
-		256, weighted_space, weighted_objects);
+	lp_runtime_memory_sample(runtime, memory_generation, state_identity,
+		frames, 2, false, 256, weighted_space, weighted_objects);
 	assert(!lp_runtime_memory_sample_candidate(runtime,
 		memory_generation + 1, NULL, &host, 64, true, &weighted_space,
 		&weighted_objects));
@@ -182,11 +182,16 @@ main(void) {
 	assert(result.stats.sampled_alloc_bytes == 448);
 	assert(result.stats.alloc_space == 448);
 	assert(result.stats.alloc_objects == 3);
+	assert(result.stats.inuse_space == 256);
+	assert(result.stats.inuse_objects == 1);
+	assert(result.stats.live_map_overflows == 0);
 	assert(lp_result_memory_sample_count(&result) == 1);
 	lp_memory_sample_view memory_sample;
 	assert(lp_result_memory_sample(&result, 0, &memory_sample));
 	assert(memory_sample.alloc_space == 448);
 	assert(memory_sample.alloc_objects == 3);
+	assert(memory_sample.inuse_space == 256);
+	assert(memory_sample.inuse_objects == 1);
 	assert(memory_sample.sampled_bytes == 448);
 	assert(memory_sample.sample_count == 3);
 	assert(memory_sample.depth == 2);

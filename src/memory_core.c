@@ -9,7 +9,10 @@
 #define LP_MEMORY_AGGREGATE_CAPACITY 2048u
 #define LP_MEMORY_SOURCE_CAPACITY (256u * 1024u)
 #define LP_MEMORY_MAX_SOURCE_LENGTH 1024u
+#define LP_MEMORY_LIVE_CAPACITY 16384u
+#define LP_MEMORY_LIVE_BUCKET_CAPACITY 32768u
 #define LP_NO_SOURCE UINT32_MAX
+#define LP_NO_LIVE_ENTRY UINT32_MAX
 
 typedef struct lp_compact_frame {
 	uint32_t symbol;
@@ -33,6 +36,8 @@ typedef struct lp_memory_aggregate {
 	uint64_t hash;
 	uint64_t alloc_space;
 	uint64_t alloc_objects;
+	uint64_t inuse_space;
+	uint64_t inuse_objects;
 	uint64_t sampled_bytes;
 	uint64_t sample_count;
 	uint16_t depth;
@@ -40,9 +45,19 @@ typedef struct lp_memory_aggregate {
 	lp_compact_frame frames[LP_MEMORY_MAX_STACK_DEPTH];
 } lp_memory_aggregate;
 
+typedef struct lp_memory_live_entry {
+	void *pointer;
+	uint64_t weighted_space;
+	uint64_t weighted_objects;
+	uint32_t aggregate_index;
+	uint32_t next;
+} lp_memory_live_entry;
+
 struct lp_memory_profile {
 	lp_memory_symbol *symbols;
 	lp_memory_aggregate *aggregates;
+	lp_memory_live_entry *live_entries;
+	uint32_t *live_buckets;
 	char *sources;
 	uint64_t sample_bytes;
 	uint64_t random_state;
@@ -50,6 +65,8 @@ struct lp_memory_profile {
 	uint64_t bytes_until_sample;
 	size_t source_used;
 	size_t aggregate_count;
+	size_t live_count;
+	uint32_t live_free_head;
 	bool sources_full;
 	lp_result_stats stats;
 };
@@ -57,6 +74,110 @@ struct lp_memory_profile {
 static uint64_t
 saturating_add(uint64_t value, uint64_t increment) {
 	return UINT64_MAX - value < increment ? UINT64_MAX : value + increment;
+}
+
+static uint64_t
+saturating_subtract(uint64_t value, uint64_t decrement) {
+	return value < decrement ? 0 : value - decrement;
+}
+
+static size_t
+pointer_bucket(const void *pointer) {
+	uint64_t value = (uint64_t)(uintptr_t)pointer;
+	value ^= value >> 30;
+	value *= UINT64_C(0xbf58476d1ce4e5b9);
+	value ^= value >> 27;
+	value *= UINT64_C(0x94d049bb133111eb);
+	value ^= value >> 31;
+	return (size_t)value & (LP_MEMORY_LIVE_BUCKET_CAPACITY - 1u);
+}
+
+static void
+subtract_live_weight(lp_memory_profile *profile,
+	const lp_memory_live_entry *entry) {
+	if (entry->aggregate_index < LP_MEMORY_AGGREGATE_CAPACITY) {
+		lp_memory_aggregate *aggregate =
+			&profile->aggregates[entry->aggregate_index];
+		aggregate->inuse_space = saturating_subtract(
+			aggregate->inuse_space, entry->weighted_space);
+		aggregate->inuse_objects = saturating_subtract(
+			aggregate->inuse_objects, entry->weighted_objects);
+	}
+	profile->stats.inuse_space = saturating_subtract(
+		profile->stats.inuse_space, entry->weighted_space);
+	profile->stats.inuse_objects = saturating_subtract(
+		profile->stats.inuse_objects, entry->weighted_objects);
+}
+
+static void
+remove_live(lp_memory_profile *profile, void *pointer) {
+	if (profile->live_buckets == NULL || pointer == NULL) {
+		return;
+	}
+	size_t bucket = pointer_bucket(pointer);
+	uint32_t *link = &profile->live_buckets[bucket];
+	while (*link != LP_NO_LIVE_ENTRY) {
+		uint32_t index = *link;
+		lp_memory_live_entry *entry = &profile->live_entries[index];
+		if (entry->pointer == pointer) {
+			subtract_live_weight(profile, entry);
+			*link = entry->next;
+			entry->pointer = NULL;
+			entry->next = profile->live_free_head;
+			profile->live_free_head = index;
+			profile->live_count--;
+			return;
+		}
+		link = &entry->next;
+	}
+}
+
+static void
+add_live(lp_memory_profile *profile, void *pointer,
+	uint32_t aggregate_index, uint64_t weighted_space,
+	uint64_t weighted_objects) {
+	if (profile->live_buckets == NULL || pointer == NULL) {
+		return;
+	}
+	size_t bucket = pointer_bucket(pointer);
+	uint32_t index = profile->live_buckets[bucket];
+	while (index != LP_NO_LIVE_ENTRY) {
+		lp_memory_live_entry *entry = &profile->live_entries[index];
+		if (entry->pointer == pointer) {
+			subtract_live_weight(profile, entry);
+			entry->weighted_space = weighted_space;
+			entry->weighted_objects = weighted_objects;
+			entry->aggregate_index = aggregate_index;
+			goto add_weight;
+		}
+		index = entry->next;
+	}
+	if (profile->live_free_head == LP_NO_LIVE_ENTRY) {
+		profile->stats.live_map_overflows = saturating_add(
+			profile->stats.live_map_overflows, 1);
+		return;
+	}
+	index = profile->live_free_head;
+	lp_memory_live_entry *entry = &profile->live_entries[index];
+	profile->live_free_head = entry->next;
+	entry->pointer = pointer;
+	entry->weighted_space = weighted_space;
+	entry->weighted_objects = weighted_objects;
+	entry->aggregate_index = aggregate_index;
+	entry->next = profile->live_buckets[bucket];
+	profile->live_buckets[bucket] = index;
+	profile->live_count++;
+
+add_weight:
+	profile->aggregates[aggregate_index].inuse_space = saturating_add(
+		profile->aggregates[aggregate_index].inuse_space, weighted_space);
+	profile->aggregates[aggregate_index].inuse_objects = saturating_add(
+		profile->aggregates[aggregate_index].inuse_objects,
+		weighted_objects);
+	profile->stats.inuse_space = saturating_add(profile->stats.inuse_space,
+		weighted_space);
+	profile->stats.inuse_objects = saturating_add(
+		profile->stats.inuse_objects, weighted_objects);
 }
 
 static uint64_t
@@ -227,7 +348,8 @@ aggregate_matches(const lp_memory_aggregate *aggregate,
 }
 
 lp_memory_profile *
-lp_memory_profile_new(uint64_t sample_bytes, uint64_t seed) {
+lp_memory_profile_new(uint64_t sample_bytes, uint64_t seed,
+	bool track_free) {
 	if (sample_bytes == 0) {
 		return NULL;
 	}
@@ -240,10 +362,28 @@ lp_memory_profile_new(uint64_t sample_bytes, uint64_t seed) {
 	profile->aggregates = calloc(LP_MEMORY_AGGREGATE_CAPACITY,
 		sizeof(profile->aggregates[0]));
 	profile->sources = malloc(LP_MEMORY_SOURCE_CAPACITY);
+	if (track_free) {
+		profile->live_entries = calloc(LP_MEMORY_LIVE_CAPACITY,
+			sizeof(profile->live_entries[0]));
+		profile->live_buckets = malloc(LP_MEMORY_LIVE_BUCKET_CAPACITY *
+			sizeof(profile->live_buckets[0]));
+	}
 	if (profile->symbols == NULL || profile->aggregates == NULL ||
-		profile->sources == NULL) {
+		profile->sources == NULL || (track_free &&
+			(profile->live_entries == NULL ||
+			profile->live_buckets == NULL))) {
 		lp_memory_profile_delete(profile);
 		return NULL;
+	}
+	profile->live_free_head = LP_NO_LIVE_ENTRY;
+	if (track_free) {
+		for (uint32_t i = 0; i < LP_MEMORY_LIVE_BUCKET_CAPACITY; ++i) {
+			profile->live_buckets[i] = LP_NO_LIVE_ENTRY;
+		}
+		for (uint32_t i = LP_MEMORY_LIVE_CAPACITY; i-- != 0;) {
+			profile->live_entries[i].next = profile->live_free_head;
+			profile->live_free_head = i;
+		}
 	}
 	profile->sample_bytes = sample_bytes;
 	profile->random_state = seed;
@@ -260,8 +400,36 @@ lp_memory_profile_delete(lp_memory_profile *profile) {
 	}
 	free(profile->symbols);
 	free(profile->aggregates);
+	free(profile->live_entries);
+	free(profile->live_buckets);
 	free(profile->sources);
 	free(profile);
+}
+
+void
+lp_memory_profile_finish(lp_memory_profile *profile) {
+	if (profile == NULL) {
+		return;
+	}
+	free(profile->live_entries);
+	free(profile->live_buckets);
+	profile->live_entries = NULL;
+	profile->live_buckets = NULL;
+	profile->live_count = 0;
+	profile->live_free_head = LP_NO_LIVE_ENTRY;
+}
+
+void
+lp_memory_profile_allocation_event(lp_memory_profile *profile,
+	void *old_pointer, void *new_pointer, size_t new_size, bool success) {
+	if (profile == NULL || profile->live_buckets == NULL || !success ||
+		old_pointer == NULL) {
+		return;
+	}
+	if ((new_pointer == NULL && new_size == 0) ||
+		(new_pointer != NULL && new_size != 0)) {
+		remove_live(profile, old_pointer);
+	}
 }
 
 bool
@@ -292,11 +460,11 @@ lp_memory_profile_should_sample(lp_memory_profile *profile,
 
 void
 lp_memory_profile_record(lp_memory_profile *profile,
-	const lp_stack_frame *frames, size_t depth, bool truncated,
-	size_t allocation_size, uint64_t weighted_space,
+	void *allocation_pointer, const lp_stack_frame *frames, size_t depth,
+	bool truncated, size_t allocation_size, uint64_t weighted_space,
 	uint64_t weighted_objects) {
 	if (profile == NULL || allocation_size == 0 || weighted_space == 0 ||
-		weighted_objects == 0) {
+		weighted_objects == 0 || (frames == NULL && depth != 0)) {
 		return;
 	}
 	if (depth > LP_MEMORY_MAX_STACK_DEPTH) {
@@ -338,6 +506,8 @@ lp_memory_profile_record(lp_memory_profile *profile,
 					aggregate->sampled_bytes, allocation_size);
 				aggregate->sample_count = saturating_add(
 					aggregate->sample_count, 1);
+				add_live(profile, allocation_pointer, (uint32_t)index,
+					weighted_space, weighted_objects);
 				return;
 			}
 			continue;
@@ -351,6 +521,8 @@ lp_memory_profile_record(lp_memory_profile *profile,
 		aggregate->depth = (uint16_t)depth;
 		memcpy(aggregate->frames, compact, depth * sizeof(compact[0]));
 		profile->aggregate_count++;
+		add_live(profile, allocation_pointer, (uint32_t)index,
+			weighted_space, weighted_objects);
 		return;
 	}
 	profile->stats.aggregate_overflows = saturating_add(
@@ -367,6 +539,9 @@ lp_memory_profile_merge_stats(const lp_memory_profile *profile,
 	stats->sampled_alloc_bytes = profile->stats.sampled_alloc_bytes;
 	stats->alloc_space = profile->stats.alloc_space;
 	stats->alloc_objects = profile->stats.alloc_objects;
+	stats->inuse_space = profile->stats.inuse_space;
+	stats->inuse_objects = profile->stats.inuse_objects;
+	stats->live_map_overflows = profile->stats.live_map_overflows;
 	stats->stack_truncations = profile->stats.stack_truncations;
 	stats->aggregate_overflows = profile->stats.aggregate_overflows;
 	stats->symbol_overflows = profile->stats.symbol_overflows;
@@ -402,6 +577,8 @@ lp_memory_profile_sample(const lp_memory_profile *profile, size_t index,
 	}
 	sample->alloc_space = aggregate->alloc_space;
 	sample->alloc_objects = aggregate->alloc_objects;
+	sample->inuse_space = aggregate->inuse_space;
+	sample->inuse_objects = aggregate->inuse_objects;
 	sample->sampled_bytes = aggregate->sampled_bytes;
 	sample->sample_count = aggregate->sample_count;
 	sample->depth = aggregate->depth;
@@ -444,4 +621,15 @@ lp_memory_profile_frame(const lp_memory_profile *profile,
 uint64_t
 lp_memory_profile_bytes_until_sample(const lp_memory_profile *profile) {
 	return profile == NULL ? 0 : profile->bytes_until_sample;
+}
+
+bool
+lp_memory_profile_tracks_live(const lp_memory_profile *profile) {
+	return profile != NULL && profile->live_buckets != NULL;
+}
+
+size_t
+lp_memory_profile_live_capacity(const lp_memory_profile *profile) {
+	return lp_memory_profile_tracks_live(profile)
+		? LP_MEMORY_LIVE_CAPACITY : 0;
 }

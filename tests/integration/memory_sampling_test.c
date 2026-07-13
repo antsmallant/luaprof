@@ -16,7 +16,17 @@ typedef struct allocation_tracker {
 	bool enabled;
 	uint64_t objects;
 	uint64_t bytes;
+	uint64_t live_objects;
+	uint64_t live_bytes;
+	struct tracked_allocation *live;
+	size_t live_count;
+	size_t live_capacity;
 } allocation_tracker;
+
+typedef struct tracked_allocation {
+	void *pointer;
+	size_t size;
+} tracked_allocation;
 
 typedef struct test_vm {
 	lua_State *L;
@@ -31,11 +41,54 @@ tracking_allocator(void *userdata, void *pointer, size_t old_size,
 	(void)old_size;
 	allocation_tracker *tracker = userdata;
 	if (new_size == 0) {
+		if (tracker->enabled) {
+			for (size_t i = 0; i < tracker->live_count; ++i) {
+				if (tracker->live[i].pointer == pointer) {
+					tracker->live_bytes -= tracker->live[i].size;
+					tracker->live_objects--;
+					tracker->live[i] =
+						tracker->live[--tracker->live_count];
+					break;
+				}
+			}
+		}
 		free(pointer);
 		return NULL;
 	}
+	size_t tracked_index = SIZE_MAX;
+	if (tracker->enabled) {
+		for (size_t i = 0; i < tracker->live_count; ++i) {
+			if (tracker->live[i].pointer == pointer) {
+				tracked_index = i;
+				break;
+			}
+		}
+	}
 	void *new_pointer = realloc(pointer, new_size);
 	if (new_pointer != NULL && tracker->enabled) {
+		if (tracked_index != SIZE_MAX) {
+			tracker->live_bytes -= tracker->live[tracked_index].size;
+			tracker->live_objects--;
+			tracker->live[tracked_index] =
+				tracker->live[--tracker->live_count];
+		}
+		if (tracker->live_count == tracker->live_capacity) {
+			size_t capacity = tracker->live_capacity == 0
+				? 256 : tracker->live_capacity * 2;
+			tracked_allocation *live = realloc(tracker->live,
+				capacity * sizeof(live[0]));
+			if (live == NULL) {
+				abort();
+			}
+			tracker->live = live;
+			tracker->live_capacity = capacity;
+		}
+		tracker->live[tracker->live_count++] = (tracked_allocation) {
+			.pointer = new_pointer,
+			.size = new_size,
+		};
+		tracker->live_bytes += new_size;
+		tracker->live_objects++;
 		tracker->objects++;
 		tracker->bytes += new_size;
 	}
@@ -59,6 +112,7 @@ static void
 close_vm(test_vm *vm) {
 	lp_runtime_delete(vm->runtime);
 	lua_close(vm->L);
+	free(vm->tracker.live);
 }
 
 static void
@@ -71,12 +125,12 @@ run_chunk(lua_State *L, const char *source, const char *name) {
 }
 
 static uint64_t
-start_memory(test_vm *vm, uint64_t sample_bytes) {
+start_memory(test_vm *vm, uint64_t sample_bytes, bool track_free) {
 	lp_collector_config config = {
 		.kind = LP_COLLECTOR_MEMORY,
 		.value.memory = {
 			.sample_bytes = sample_bytes,
-			.track_free = false,
+			.track_free = track_free,
 		},
 	};
 	uint64_t generation = 0;
@@ -116,7 +170,7 @@ static void
 test_exact_mode(void) {
 	test_vm vm;
 	open_vm(&vm);
-	uint64_t generation = start_memory(&vm, 1);
+	uint64_t generation = start_memory(&vm, 1, false);
 	vm.tracker.enabled = true;
 	run_chunk(vm.L,
 		"for round = 1, 8 do\n"
@@ -131,6 +185,8 @@ test_exact_mode(void) {
 	assert(result.stats.sampled_alloc_bytes == vm.tracker.bytes);
 	assert(result.stats.alloc_space == vm.tracker.bytes);
 	assert(result.stats.alloc_objects == vm.tracker.objects);
+	assert(result.stats.inuse_space == 0);
+	assert(result.stats.inuse_objects == 0);
 	assert(result.stats.memory_samples == result.stats.allocations +
 		result.stats.reallocations);
 	assert(result.stats.reallocations != 0);
@@ -144,7 +200,7 @@ static void
 test_sampled_mode(void) {
 	test_vm vm;
 	open_vm(&vm);
-	uint64_t generation = start_memory(&vm, 4096);
+	uint64_t generation = start_memory(&vm, 4096, false);
 	run_chunk(vm.L,
 		"local keep = {}\n"
 		"for i = 1, 30000 do keep[i] = string.rep('x', i % 200 + 1) end\n",
@@ -160,10 +216,50 @@ test_sampled_mode(void) {
 	close_vm(&vm);
 }
 
+static void
+test_exact_live_mode(void) {
+	test_vm vm;
+	open_vm(&vm);
+	uint64_t generation = start_memory(&vm, 1, true);
+	vm.tracker.enabled = true;
+	run_chunk(vm.L,
+		"local keep = {}\n"
+		"for i = 1, 1000 do keep[i] = { i, tostring(i) } end\n"
+		"for round = 1, 4 do\n"
+		"  local discard = {}\n"
+		"  for i = 1, 2000 do discard[i] = string.rep('x', i % 80) end\n"
+		"end\n"
+		"collectgarbage('collect')\n"
+		"_G.memory_live_keep = keep\n",
+		"@memory_live.lua");
+	lp_result_meta result = stop_memory(&vm, generation);
+	vm.tracker.enabled = false;
+	assert(vm.tracker.live_objects != 0);
+	assert(vm.tracker.live_objects < vm.tracker.objects);
+	assert(result.stats.frees != 0);
+	assert(result.stats.inuse_space == vm.tracker.live_bytes);
+	assert(result.stats.inuse_objects == vm.tracker.live_objects);
+	assert(result.stats.live_map_overflows == 0);
+	uint64_t aggregate_space = 0;
+	uint64_t aggregate_objects = 0;
+	for (size_t i = 0; i < lp_result_memory_sample_count(&result); ++i) {
+		lp_memory_sample_view sample;
+		assert(lp_result_memory_sample(&result, i, &sample));
+		aggregate_space += sample.inuse_space;
+		aggregate_objects += sample.inuse_objects;
+	}
+	assert(aggregate_space == result.stats.inuse_space);
+	assert(aggregate_objects == result.stats.inuse_objects);
+	assert(result_has_source(&result, "@memory_live.lua"));
+	lp_result_meta_dispose(&result);
+	close_vm(&vm);
+}
+
 int
 main(void) {
 	test_exact_mode();
 	test_sampled_mode();
+	test_exact_live_mode();
 	puts("luaprof alloc-space memory sampling: ok");
 	return EXIT_SUCCESS;
 }

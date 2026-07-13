@@ -72,6 +72,14 @@ event produces at most one sample. Samples are probability-weighted to estimate
 report raw observations. Setting `sample_bytes = 1` records every successful
 allocation and realloc.
 
-The current memory result is alloc-space only. `track_free = true` is accepted
-by the V1 API, but sampled live-pointer tracking and in-use metrics are not yet
-implemented. pprof export is also a later milestone.
+With `track_free = false`, the recorder does not allocate or query a live-pointer
+map and reports alloc-space only. With `track_free = true`, sampled live blocks
+are tracked until a matching free or successful realloc and are reported as
+`inuse_space` and `inuse_objects` on their original allocation stacks. Failed
+reallocs leave the old block live; successful reallocs end the old sampled block
+and treat the complete new block as a new allocation sample. Free-site,
+lifetime, peak and object-timeline profiling are intentionally not collected.
+
+The live map is preallocated for 16384 sampled blocks. Additional sampled live
+blocks still contribute alloc-space but not in-use values, and are reported by
+`live_map_overflows`. pprof export is a later milestone.

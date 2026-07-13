@@ -180,8 +180,8 @@ allocation(void *userdata, lua_State *L,
 		bool truncated = false;
 		size_t depth = capture_stack(L, frames, &truncated);
 		lp_runtime_memory_sample(bridge->runtime,
-			bridge->memory_generation, frames, depth, truncated,
-			event->new_size, weighted_space, weighted_objects);
+			bridge->memory_generation, event->new_pointer, frames, depth,
+			truncated, event->new_size, weighted_space, weighted_objects);
 	}
 }
 

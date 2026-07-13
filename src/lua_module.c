@@ -325,6 +325,13 @@ result_stats(lua_State *L) {
 		lua_setfield(L, -2, "alloc_space");
 		lua_pushinteger(L, (lua_Integer)result->meta.stats.alloc_objects);
 		lua_setfield(L, -2, "alloc_objects");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.inuse_space);
+		lua_setfield(L, -2, "inuse_space");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.inuse_objects);
+		lua_setfield(L, -2, "inuse_objects");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.live_map_overflows);
+		lua_setfield(L, -2, "live_map_overflows");
 		lua_pushinteger(L,
 			(lua_Integer)result->meta.stats.stack_truncations);
 		lua_setfield(L, -2, "stack_truncations");

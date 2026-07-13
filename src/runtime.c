@@ -125,7 +125,8 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 			UINT64_C(0x9e3779b97f4a7c15), memory_order_relaxed);
 		seed ^= (uint64_t)(uintptr_t)runtime ^ next;
 		slot->memory_profile = lp_memory_profile_new(
-			config->value.memory.sample_bytes, seed);
+			config->value.memory.sample_bytes, seed,
+			config->value.memory.track_free);
 		if (slot->memory_profile == NULL) {
 			memset(slot, 0, sizeof(*slot));
 			return LP_ERR_NOMEM;
@@ -179,6 +180,7 @@ lp_runtime_stop(lp_runtime *runtime, lua_State *current_state,
 	}
 	else {
 		lp_memory_profile_merge_stats(slot->memory_profile, &slot->stats);
+		lp_memory_profile_finish(slot->memory_profile);
 	}
 	memset(result, 0, sizeof(*result));
 	result->kind = kind;
@@ -278,6 +280,8 @@ lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 		return;
 	}
 	*counter = saturating_add(*counter, 1);
+	lp_memory_profile_allocation_event(slot->memory_profile, old_pointer,
+		new_pointer, new_size, success);
 }
 
 bool
@@ -300,8 +304,8 @@ lp_runtime_memory_sample_candidate(lp_runtime *runtime,
 
 void
 lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
-	const lp_stack_frame *frames, size_t depth, bool truncated,
-	size_t allocation_size, uint64_t weighted_space,
+	void *allocation_pointer, const lp_stack_frame *frames, size_t depth,
+	bool truncated, size_t allocation_size, uint64_t weighted_space,
 	uint64_t weighted_objects) {
 	if (runtime == NULL) {
 		return;
@@ -310,8 +314,9 @@ lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
 	if (!slot->active || slot->generation != generation) {
 		return;
 	}
-	lp_memory_profile_record(slot->memory_profile, frames, depth, truncated,
-		allocation_size, weighted_space, weighted_objects);
+	lp_memory_profile_record(slot->memory_profile, allocation_pointer, frames,
+		depth, truncated, allocation_size, weighted_space,
+		weighted_objects);
 }
 
 void

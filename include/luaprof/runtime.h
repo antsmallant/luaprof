@@ -66,6 +66,9 @@ typedef struct lp_result_stats {
 	uint64_t sampled_alloc_bytes;
 	uint64_t alloc_space;
 	uint64_t alloc_objects;
+	uint64_t inuse_space;
+	uint64_t inuse_objects;
+	uint64_t live_map_overflows;
 	uint64_t samples;
 	uint64_t sample_weight;
 	uint64_t sample_host;
@@ -120,6 +123,8 @@ typedef lp_frame_view lp_memory_frame_view;
 typedef struct lp_memory_sample_view {
 	uint64_t alloc_space;
 	uint64_t alloc_objects;
+	uint64_t inuse_space;
+	uint64_t inuse_objects;
 	uint64_t sampled_bytes;
 	uint64_t sample_count;
 	size_t depth;
@@ -171,8 +176,8 @@ bool lp_runtime_memory_sample_candidate(lp_runtime *runtime,
 	size_t new_size, bool success, uint64_t *weighted_space,
 	uint64_t *weighted_objects);
 void lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
-	const lp_stack_frame *frames, size_t depth, bool truncated,
-	size_t allocation_size, uint64_t weighted_space,
+	void *allocation_pointer, const lp_stack_frame *frames, size_t depth,
+	bool truncated, size_t allocation_size, uint64_t weighted_space,
 	uint64_t weighted_objects);
 void lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
 	lp_vm_state state, lp_lua_cfunction cfunction,
