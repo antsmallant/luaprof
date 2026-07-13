@@ -1,27 +1,25 @@
 # luaprof
 
-`luaprof` is a sampling profiler for PUC Lua. CPU and memory recorders are
-independent, and the same API works in Linux thread-per-VM hosts using the
-pinned Lua 5.4.8 fork and in supported Skynet services using Skynet's pinned,
-customized Lua 5.5. V1 intentionally does not include call/return tracing.
+[English](READ-en.md)
 
-## Requirements
+`luaprof` 是面向 PUC Lua 的采样分析器。CPU 和内存 recorder 相互独立；同一套 API
+既适用于使用固定 Lua 5.4.8 fork 的 Linux thread-per-VM 宿主，也适用于受支持的
+Skynet service（使用 Skynet 固定的定制 Lua 5.5）。V1 有意不包含 call/return tracing。
 
-- Linux with POSIX per-thread CPU timers and lock-free pointer, integer and
-  64-bit atomics
-- A C11 compiler, GNU Make, POSIX threads and zlib development files
-- The pinned `lua-5.4.8` fork in `3rd/` for the default build; stock Lua does
-  not expose the required profiling bridge
-- GitHub SSH access for initializing the configured submodule URLs
-- Go's `pprof` command for reading the default output; Graphviz is additionally
-  required for SVG and graph-based web reports
+## 环境要求
 
-The profiler core does not depend on Skynet. Skynet support is an explicit host
-integration through the pinned fork in `integration/skynet`; that target keeps
-Skynet's own Lua, including its seeded state creation, code cache and shared
-Proto/table support.
+- Linux，支持 POSIX 线程 CPU timer，以及无锁的指针、整数和 64 位原子操作
+- C11 编译器、GNU Make、POSIX threads 和 zlib 开发文件
+- 默认构建需要 `3rd/` 中固定版本的 `lua-5.4.8` fork；原版 Lua 没有暴露所需的
+  profiling bridge
+- 能通过 GitHub SSH 初始化已配置的 submodule URL
+- 使用 Go 的 `pprof` 命令读取默认输出；生成 SVG 和基于图的 Web 报告还需要 Graphviz
 
-## Quick start
+profiler core 不依赖 Skynet。Skynet 支持是通过 `integration/skynet` 中固定版本 fork
+提供的显式宿主集成；该 target 保留 Skynet 自带 Lua，包括带 seed 的 state 创建、
+code cache 以及 shared Proto/table 支持。
+
+## 快速开始
 
 ```sh
 git clone git@github.com:antsmallant/luaprof.git
@@ -31,15 +29,15 @@ make test
 make example-thread-vm
 ```
 
-The example runs CPU and in-use memory recorders together, stops memory first,
-continues CPU profiling, and writes:
+示例会同时运行 CPU 和 in-use memory recorder，先停止 memory recorder，再继续 CPU
+profiling，并写出：
 
 ```text
 build/thread-vm-cpu.pb.gz
 build/thread-vm-heap.pb.gz
 ```
 
-Inspect them with standard pprof tooling:
+使用标准 pprof 工具查看：
 
 ```sh
 go tool pprof -top build/thread-vm-cpu.pb.gz
@@ -47,13 +45,12 @@ go tool pprof -sample_index=alloc_space -top build/thread-vm-heap.pb.gz
 go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 ```
 
-`make` initializes only the required Lua submodule. `make test` runs the core,
-thread-per-VM and exporter tests; Skynet and its direct submodule are initialized
-only by the explicit Skynet targets.
+`make` 只初始化必需的 Lua submodule。`make test` 运行 core、thread-per-VM 和 exporter
+测试；只有显式的 Skynet target 才会初始化 Skynet 及其直接 submodule。
 
 ## Lua API
 
-Start each recorder directly. There is no shared `profile.start()` mode table:
+直接启动各个 recorder，不使用共享的 `profile.start()` mode table：
 
 ```lua
 local profile = require "luaprof"
@@ -66,106 +63,92 @@ local memory = assert(profile.memory.start {
     track_free = true,
 })
 
--- Run the workload here.
+-- 在这里运行 workload。
 
 local memory_result = assert(memory:stop())
--- CPU profiling is still active here.
+-- 此时 CPU profiling 仍在运行。
 local cpu_result = assert(cpu:stop())
 
 assert(cpu_result:write("cpu.pb.gz"))
 assert(memory_result:write("heap.pb.gz"))
 ```
 
-`profile.cpu.start([options])` accepts `sample_hz`, an integer from 1 to 10000.
-The default is 100Hz. It measures on-thread CPU time, so sleeping does not
-produce samples.
+`profile.cpu.start([options])` 接受 `sample_hz`，取值为 1 到 10000 的整数，默认值为
+100Hz。它测量线程 CPU time，因此 sleep 不会产生样本。
 
-`profile.memory.start([options])` accepts a positive integer `sample_bytes` and
-a boolean `track_free`. The defaults are 512KiB and `false`. `sample_bytes = 1`
-records every successful allocation and realloc.
+`profile.memory.start([options])` 接受正整数 `sample_bytes` 和布尔值 `track_free`，
+默认值分别为 512KiB 和 `false`。`sample_bytes = 1` 会记录每次成功的 allocation 和
+realloc。
 
-Only one recorder of each kind may be active in a Lua VM, but CPU and memory may
-run and stop independently. A recorder's `__gc` and `__close` methods stop and
-discard an active recording; call `stop()` explicitly when the result is
-needed. A stopped result owns a frozen profile and supports:
+一个 Lua VM 同一时间每种 recorder 最多只能有一个处于活动状态，但 CPU 和 memory
+可以独立运行和停止。recorder 的 `__gc` 和 `__close` 方法会停止并丢弃仍在活动的
+recording；需要结果时应显式调用 `stop()`。停止后的 result 持有冻结的 profile，并支持：
 
-- `result:stats()` to return counters and quality metadata
-- `result:write(path[, options])` to export pprof or folded stacks
+- `result:stats()`：返回计数器和质量元数据
+- `result:write(path[, options])`：导出 pprof 或 folded stacks
 
-Unknown options and invalid option types raise Lua argument errors. Host or
-lifecycle failures return `nil, error`.
+未知 option 和错误的 option 类型会触发 Lua 参数错误。宿主或生命周期错误返回
+`nil, error`。
 
-## CPU sampling
+## CPU 采样
 
-The thread-per-VM backend uses `CLOCK_THREAD_CPUTIME_ID`. A timer tick records a
-small VM state snapshot without walking Lua or native stacks in the signal
-handler. At the next VM safe point, the recorder drains pending ticks and
-captures the Lua stack.
+thread-per-VM backend 使用 `CLOCK_THREAD_CPUTIME_ID`。timer tick 只记录很小的 VM
+状态快照，不会在 signal handler 中遍历 Lua 或 native stack。recorder 在下一个 VM
+safe point 消费 pending tick 并捕获 Lua stack。
 
-Ticks in a long C call retain the `lua_CFunction` pointer and the Lua caller.
-The exporter names the leaf `lua_CFunction@0x...`; it does not require native
-symbols and does not claim to reconstruct the native C stack. GC and host states
-are emitted as synthetic frames. This is sufficient to locate which Lua call
-entered expensive C code, but native hot lines require a separate native
-profiler.
+发生在长时间 C 调用中的 tick 会保留 `lua_CFunction` 指针和 Lua caller。exporter
+把 leaf 命名为 `lua_CFunction@0x...`；它不依赖 native symbol，也不声称能够还原
+native C stack。GC 和 host 状态以 synthetic frame 输出。这足以定位哪个 Lua 调用进入
+了高开销 C 代码；要定位 native hot line，需要另用 native profiler。
 
-Important CPU statistics are:
+重要的 CPU 统计项包括：
 
-- `samples`: attributed timer-tick weight, including timer overruns
-- `sample_lua`, `sample_c`, `sample_gc`, `sample_host`: tick weight by VM state
-- `safe_points`, `pending_weight`: safe-point drain count and requested weight
-- `state_lua`, `state_c`, `state_gc`, `state_host`: VM state transition counts
-- `dropped_events`: ticks lost because a fixed event ring was full
-- `unstable_events`: ticks rejected during an execution-slot publication race
-- `profiler_overhead_events`: ticks arriving while profile data was collected
-- `stale_events`, `scheduler_workers`: Skynet generation rejects and workers
-  observed for the target
-- `stack_truncations`, `aggregate_overflows`, `symbol_overflows`: bounded-store
-  quality counters
+- `samples`：完成归因的 timer-tick 权重，包括 timer overrun
+- `sample_lua`、`sample_c`、`sample_gc`、`sample_host`：按 VM 状态划分的 tick 权重
+- `safe_points`、`pending_weight`：safe-point 消费次数和请求权重
+- `state_lua`、`state_c`、`state_gc`、`state_host`：VM 状态切换次数
+- `dropped_events`：固定 event ring 已满而丢失的 tick
+- `unstable_events`：execution-slot 发布竞争期间被拒绝的 tick
+- `profiler_overhead_events`：采集 profile 数据期间到达的 tick
+- `stale_events`、`scheduler_workers`：Skynet generation 拒绝次数和目标使用过的 worker 数
+- `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：有界存储的质量计数器
 
-For a healthy profile, compare `samples` with the duration and configured
-frequency, inspect the state split, and require drop/overflow counters to be
-negligible. Short profiles can contain too few samples to support a conclusion.
+判断 profile 是否健康时，应比较 `samples`、持续时间和配置频率，检查各状态占比，
+并确认 drop/overflow 计数可以忽略。过短的 profile 可能没有足够样本支撑结论。
 
-## Memory sampling
+## 内存采样
 
-Allocation intervals follow a geometric distribution whose expected byte
-distance is `sample_bytes`. An allocation is selected in proportion to its full
-requested new size, produces at most one sample, and is inverse-probability
-weighted to estimate allocation bytes and objects. Frees and failed reallocs do
-not consume the sampling budget. A successful realloc is treated as ending the
-old block and allocating its complete new requested size.
+allocation interval 服从期望字节间隔为 `sample_bytes` 的几何分布。一个 allocation
+按照完整 requested new size 的比例被选中，最多产生一个样本，并通过逆概率加权估算
+allocation bytes 和 objects。free 和失败的 realloc 不消耗采样预算。成功的 realloc
+视为旧 block 结束，并按完整的新 requested size 进行一次 allocation。
 
-Memory statistics separate observations from estimates:
+内存统计项将观测值和估算值分开：
 
-- `allocation_events`, `reallocation_events`, `free_events` and
-  `allocation_failures`: exact allocator event counts while recording
-- `samples`, `sampled_alloc_bytes`: raw selected-event count and requested bytes
-- `alloc_space`, `alloc_objects`: probability-weighted allocation estimates
-- `inuse_space`, `inuse_objects`: weighted sampled blocks still live at stop
-- `live_map_overflows`: sampled live blocks omitted from in-use tracking
-- `stack_truncations`, `aggregate_overflows`, `symbol_overflows`: bounded-store
-  quality counters
+- `allocation_events`、`reallocation_events`、`free_events` 和
+  `allocation_failures`：recording 期间精确的 allocator event 计数
+- `samples`、`sampled_alloc_bytes`：原始的入选 event 数和 requested bytes
+- `alloc_space`、`alloc_objects`：概率加权后的 allocation 估算
+- `inuse_space`、`inuse_objects`：停止时仍存活的加权 sampled block
+- `live_map_overflows`：未能进入 in-use tracking 的 sampled live block
+- `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：有界存储的质量计数器
 
-With `track_free = false`, no live-pointer map is allocated or queried and the
-in-use metrics remain zero. With `track_free = true`, only sampled live blocks
-are stored and frees are attributed back to their allocation stacks. Free-site,
-lifetime, peak and object-timeline profiles are not collected.
+当 `track_free = false` 时，不会分配或查询 live-pointer map，in-use 指标保持为零。
+当 `track_free = true` 时，只保存被采样的 live block，free 会归因回其 allocation stack。
+不会采集 free-site、lifetime、peak 或逐对象 timeline profile。
 
-When Lua is reallocating its own VM stack, call-frame pointers are temporarily
-unavailable. A selected stack-reallocation event still contributes to the
-memory metrics, but is stored with an empty stack and increments
-`stack_truncations` instead of traversing invalid VM state.
+Lua 在重新分配自身 VM stack 时，call-frame 指针暂时不可用。被选中的 stack-reallocation
+event 仍会计入内存指标，但会以空 stack 保存并增加 `stack_truncations`，而不会遍历
+无效的 VM 状态。
 
-These are requested allocator sizes, not RSS, physical memory or a VM heap
-snapshot. `sample_bytes = 1` gives exact requested alloc-space and in-use values;
-larger intervals are statistical estimates. Increasing the interval reduces
-stack-capture work but raises variance, especially for short profiles and
-in-use object counts.
+这些指标是 allocator requested size，不是 RSS、物理内存或 VM heap snapshot。
+`sample_bytes = 1` 能得到精确的 requested alloc-space 和 in-use 值；更大的 interval
+是统计估算。增大 interval 会减少 stack-capture 工作，但会提高方差，尤其是在短 profile
+和 in-use object 数较少时。
 
-## Export formats
+## 导出格式
 
-The default format is gzip-compressed Google `profile.proto`:
+默认格式是经过 gzip 压缩的 Google `profile.proto`：
 
 ```lua
 assert(cpu_result:write("cpu.pb.gz"))
@@ -174,12 +157,12 @@ assert(memory_result:write("heap.pb.gz", {
 }))
 ```
 
-CPU profiles contain `samples/count` and `cpu/nanoseconds`. Memory profiles
-contain `alloc_objects/count`, `alloc_space/bytes`, `inuse_objects/count` and
-`inuse_space/bytes`. The default sample is `cpu`, `alloc_space` when free
-tracking is disabled, and `inuse_space` when it is enabled.
+CPU profile 包含 `samples/count` 和 `cpu/nanoseconds`。Memory profile 包含
+`alloc_objects/count`、`alloc_space/bytes`、`inuse_objects/count` 和
+`inuse_space/bytes`。默认 sample 对 CPU 是 `cpu`；关闭 free tracking 时是
+`alloc_space`；启用时是 `inuse_space`。
 
-Examples of alternate reports are:
+其他报告示例：
 
 ```sh
 go tool pprof -text cpu.pb.gz
@@ -187,7 +170,7 @@ go tool pprof -sample_index=inuse_space -svg heap.pb.gz > heap.svg
 go tool pprof -http=:0 heap.pb.gz
 ```
 
-Folded root-to-leaf stacks are also available for flame graph tooling:
+还可以为 flame graph 工具导出从 root 到 leaf 的 folded stack：
 
 ```lua
 assert(memory_result:write("heap.folded", {
@@ -196,77 +179,73 @@ assert(memory_result:write("heap.folded", {
 }))
 ```
 
-## Skynet integration
+## Skynet 集成
 
-Build and run the two-worker example explicitly:
+显式构建并运行双 worker 示例：
 
 ```sh
 make example-skynet
 ```
 
-The service in `examples/skynet/luaprof_smoke.lua` starts CPU and in-use memory
-recorders together and validates that CPU continues after memory stops. The
-Skynet fork links a small host library into the executable, publishes the target
-VM at service dispatch boundaries and maintains one CPU timer per worker.
+`examples/skynet/luaprof_smoke.lua` 中的 service 会同时启动 CPU 和 in-use memory
+recorder，并验证 memory 停止后 CPU 仍继续运行。Skynet fork 将一个小型 host library
+链接到可执行文件中，在 service dispatch 边界发布目标 VM，并为每个 worker 维护一个
+CPU timer。
 
-The two hosts intentionally use different Lua ABI builds:
+两个宿主有意使用不同 Lua ABI 的构建产物：
 
 ```text
 build/luaprof.so          Lua 5.4.8 thread-per-VM module
 build/skynet/luaprof.so   Skynet customized Lua 5.5 module
 ```
 
-`make test-skynet` builds Skynet against `integration/skynet/3rd/lua`; it does
-not pass the parent project's `LUA_INC` or `LUA_LIB`. The target checks the
-linked symbols, runs the VM bridge and Lua API suites against Skynet's Lua, and
-then runs the real two-worker service with shared-table coverage.
+`make test-skynet` 使用 `integration/skynet/3rd/lua` 构建 Skynet；不会传入父项目的
+`LUA_INC` 或 `LUA_LIB`。该 target 会检查链接符号，使用 Skynet Lua 运行 VM bridge 和
+Lua API 测试，然后运行覆盖 shared table 的真实双 worker service。
 
-Multiple Skynet services may record CPU concurrently, but all active CPU
-recorders currently must use the same `sample_hz`. Service migration, stale
-ticks, worker shutdown and concurrent stop are covered by the scheduler tests.
+多个 Skynet service 可以并发记录 CPU，但目前所有活动的 CPU recorder 必须使用相同的
+`sample_hz`。scheduler 测试覆盖 service migration、stale tick、worker shutdown 和
+concurrent stop。
 
-Run the same VM and combined-profiler benchmarks against Skynet's Lua with:
+使用 Skynet Lua 运行相同的 VM 和组合 profiler benchmark：
 
 ```sh
 make bench-skynet-vm
 make bench-skynet-combined
 ```
 
-## Fixed bounds
+## 固定上限
 
-Hot-path storage is preallocated and does not grow during recording:
+热路径存储会预先分配，recording 期间不会增长：
 
-| Resource | Bound per recorder or host |
+| 资源 | 每个 recorder 或 host 的上限 |
 | --- | ---: |
-| Captured stack depth | 64 frames |
+| 捕获的 stack 深度 | 64 frames |
 | CPU symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
 | Memory symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
-| Sampled live blocks with `track_free` | 16384 |
-| Thread or Skynet timer event ring | 4096 entries |
+| 使用 `track_free` 时的 sampled live blocks | 16384 |
+| Thread 或 Skynet timer event ring | 4096 entries |
 | Thread timers / Skynet targets / Skynet workers | 64 / 128 / 64 |
 
-Source names longer than 1024 bytes are truncated. When a bound is reached,
-recording remains bounded and the corresponding drop, truncation or overflow
-counter increases. Exporting happens after stop and may allocate memory.
+超过 1024 bytes 的 source name 会被截断。达到上限后，recording 仍保持有界，对应的
+drop、truncation 或 overflow 计数器会增加。导出在 stop 后执行，期间可以分配内存。
 
-## Supported scope
+## 支持范围
 
-- PUC Lua 5.4.8 at the exact parent-repository gitlink for thread-per-VM hosts
-- Linux thread-per-VM hosts where a VM remains on its owner OS thread
-- The pinned Skynet fork with its customized Lua 5.5, where a VM may move
-  serially between workers
-- Lua and coroutine stacks up to the documented fixed depth
+- thread-per-VM 宿主使用父仓库准确 gitlink 固定的 PUC Lua 5.4.8
+- Linux thread-per-VM 宿主，且 VM 始终在所属 OS thread 上运行
+- 固定版本的 Skynet fork 及其定制 Lua 5.5；VM 可以在 worker 之间串行迁移
+- 不超过文档所述固定深度的 Lua 和 coroutine stack
 
-Stock Lua, unlisted Lua versions, Windows/macOS, native C stack unwinding,
-tracing, allocation timelines and VM object snapshots are outside V1.
+原版 Lua、未列出的 Lua 版本、Windows/macOS、native C stack unwinding、tracing、
+allocation timeline 和 VM object snapshot 不在 V1 范围内。
 
-## Submodule development
+## Submodule 开发
 
-The parent repository pins exact Lua and Skynet commits. The `branch = luaprof`
-entries only identify the collaboration branches; normal builds never float to
-their latest remote commits.
+父仓库固定准确的 Lua 和 Skynet commit。`branch = luaprof` 只用于标识协作分支；
+普通构建不会浮动到远端最新 commit。
 
-When changing a fork, commit and push it first, then update the parent gitlink:
+修改 fork 时，先提交并推送 fork，再更新父仓库 gitlink：
 
 ```sh
 git -C 3rd/lua-5.4.8 switch luaprof
@@ -277,12 +256,11 @@ git add 3rd/lua-5.4.8
 git commit -m "build: update Lua submodule"
 ```
 
-Use the same sequence for `integration/skynet`. A fresh checkout should use
-`git submodule update --init 3rd/lua-5.4.8 integration/skynet` to restore the
-exact pinned commits without downloading unused nested dependencies.
+`integration/skynet` 使用相同的步骤。全新 checkout 应执行
+`git submodule update --init 3rd/lua-5.4.8 integration/skynet`，以恢复准确固定的
+commit，且不会下载未使用的嵌套依赖。
 
-Profiling changes for Skynet Lua belong in `integration/skynet/3rd/lua` and are
-committed as part of the Skynet fork. Do not replace that tree with the parent
-Lua fork or pass parent `LUA_INC`/`LUA_LIB` values into the Skynet build. Both
-Lua trees expose profiler bridge ABI version 1 and run the same bridge contract
-test, while retaining their own VM ABI and host-specific behavior.
+Skynet Lua 的 profiling 修改应放在 `integration/skynet/3rd/lua` 中，并作为 Skynet
+fork 的一部分提交。不要用父项目 Lua fork 替换该目录，也不要把父项目的 `LUA_INC`/
+`LUA_LIB` 传入 Skynet 构建。两棵 Lua 源码树都暴露 profiler bridge ABI version 1，
+运行相同的 bridge contract test，同时保留各自的 VM ABI 和宿主特定行为。
