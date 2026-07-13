@@ -1,5 +1,6 @@
 #include "luaprof/runtime.h"
 #include "lua_bridge.h"
+#include "lua_symbols.h"
 #include "pprof_exporter.h"
 
 #include <stdint.h>
@@ -12,7 +13,7 @@
 _Static_assert(LUA_VERSION_NUM == LUAPROF_EXPECT_LUA_VERSION,
 	"luaprof module built against an unexpected Lua ABI");
 #endif
-_Static_assert(LUA_PROFILE_ABI_VERSION == 1,
+_Static_assert(LUA_PROFILE_ABI_VERSION == 2,
 	"luaprof module built against an unexpected profiler bridge ABI");
 
 #define LP_RUNTIME_METATABLE "luaprof.runtime"
@@ -385,8 +386,16 @@ result_write(lua_State *L) {
 		lua_pop(L, 1);
 	}
 	char error[256];
-	if (!lp_export_result(&result->meta, path, format, sample_type, error,
-		sizeof(error))) {
+	lp_lua_symbols *lua_symbols = lp_lua_symbols_collect(L);
+	lp_export_symbols symbols = {
+		.userdata = lua_symbols,
+		.cfunction_name = lp_lua_symbols_lookup,
+	};
+	bool success = lp_export_result_with_symbols(&result->meta, path, format,
+		sample_type, lua_symbols == NULL ? NULL : &symbols, error,
+		sizeof(error));
+	lp_lua_symbols_delete(lua_symbols);
+	if (!success) {
 		lua_pushnil(L);
 		lua_pushstring(L, error);
 		return 2;

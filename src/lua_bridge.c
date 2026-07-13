@@ -29,6 +29,8 @@ capture_stack(lua_State *state, lp_stack_frame *frames, bool *truncated) {
 		frames[i].cfunction = captured[i].cfunction;
 		frames[i].source = captured[i].source;
 		frames[i].source_length = captured[i].source_length;
+		frames[i].name = captured[i].name;
+		frames[i].name_length = captured[i].name_length;
 		frames[i].linedefined = captured[i].linedefined;
 		frames[i].currentline = captured[i].currentline;
 	}

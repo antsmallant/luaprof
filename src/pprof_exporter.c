@@ -1,4 +1,5 @@
 #include "pprof_exporter.h"
+#include "native_symbol.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -32,6 +33,8 @@ typedef struct lp_frame_desc {
 	lp_lua_cfunction cfunction;
 	const char *source;
 	size_t source_length;
+	const char *name;
+	size_t name_length;
 	int linedefined;
 	int currentline;
 	const char *synthetic;
@@ -49,11 +52,24 @@ typedef struct lp_export_function {
 	const char *synthetic;
 	int64_t name;
 	int64_t filename;
+	uint32_t mapping_index;
 } lp_export_function;
+
+typedef struct lp_export_mapping {
+	uint64_t id;
+	uint64_t start;
+	uint64_t limit;
+	uint64_t offset;
+	int64_t filename;
+	bool has_functions;
+	bool has_filenames;
+	bool has_line_numbers;
+} lp_export_mapping;
 
 typedef struct lp_export_location {
 	uint64_t id;
 	uint32_t function_index;
+	uint32_t mapping_index;
 	int line;
 	uint64_t address;
 } lp_export_location;
@@ -79,6 +95,10 @@ typedef struct lp_export_model {
 	lp_export_sample *samples;
 	size_t sample_count;
 	size_t sample_capacity;
+	lp_export_mapping *mappings;
+	size_t mapping_count;
+	size_t mapping_capacity;
+	const lp_export_symbols *symbols;
 	const char *sample_names[4];
 	const char *sample_units[4];
 	int64_t sample_name_indices[4];
@@ -248,6 +268,45 @@ add_literal(lp_export_model *model, const char *value) {
 	return add_string(model, value, strlen(value));
 }
 
+static uint32_t
+intern_mapping(lp_export_model *model, uint64_t start, uint64_t limit,
+	uint64_t offset, const char *filename, size_t filename_length,
+	bool has_functions, bool has_filenames, bool has_line_numbers) {
+	for (size_t i = 0; i < model->mapping_count; ++i) {
+		lp_export_mapping *mapping = &model->mappings[i];
+		const lp_export_string *stored = &model->strings[mapping->filename];
+		if (mapping->start == start && mapping->limit == limit &&
+			mapping->offset == offset && stored->length == filename_length &&
+			memcmp(stored->data, filename, filename_length) == 0) {
+			mapping->has_functions |= has_functions;
+			mapping->has_filenames |= has_filenames;
+			mapping->has_line_numbers |= has_line_numbers;
+			return (uint32_t)i;
+		}
+	}
+	if (!grow_array((void **)&model->mappings, &model->mapping_capacity,
+		model->mapping_count + 1, sizeof(model->mappings[0]))) {
+		model_fail(model, "out of memory while building mappings");
+		return UINT32_MAX;
+	}
+	int64_t file_index = add_string(model, filename, filename_length);
+	if (file_index < 0) {
+		return UINT32_MAX;
+	}
+	uint32_t index = (uint32_t)model->mapping_count++;
+	model->mappings[index] = (lp_export_mapping) {
+		.id = (uint64_t)index + 1u,
+		.start = start,
+		.limit = limit,
+		.offset = offset,
+		.filename = file_index,
+		.has_functions = has_functions,
+		.has_filenames = has_filenames,
+		.has_line_numbers = has_line_numbers,
+	};
+	return index;
+}
+
 static uint64_t
 frame_hash(const lp_frame_desc *frame) {
 	uint64_t hash = UINT64_C(1469598103934665603);
@@ -286,8 +345,10 @@ function_matches(const lp_export_function *function,
 
 static bool
 format_function(lp_export_model *model, const lp_frame_desc *frame,
-	int64_t *name_index, int64_t *filename_index) {
+	int64_t *name_index, int64_t *filename_index,
+	uint32_t *mapping_index) {
 	char name[1200];
+	lp_native_symbol native;
 	const char *filename = "[unknown]";
 	size_t filename_length = sizeof("[unknown]") - 1;
 	if (frame->synthetic != NULL) {
@@ -296,10 +357,63 @@ format_function(lp_export_model *model, const lp_frame_desc *frame,
 		filename_length = sizeof("[luaprof]") - 1;
 	}
 	else if (frame->kind == LP_FRAME_C) {
-		(void)snprintf(name, sizeof(name), "lua_CFunction@0x%" PRIxPTR,
-			(uintptr_t)frame->cfunction);
-		filename = "[C]";
-		filename_length = sizeof("[C]") - 1;
+		size_t lua_name_length = 0;
+		const char *lua_name = model->symbols != NULL &&
+			model->symbols->cfunction_name != NULL
+			? model->symbols->cfunction_name(model->symbols->userdata,
+				frame->cfunction, &lua_name_length) : NULL;
+		bool native_found = lp_native_symbol_resolve(
+			(const void *)frame->cfunction, &native);
+		if (lua_name != NULL && lua_name_length != 0 &&
+			native.name_length != 0 &&
+			(lua_name_length != native.name_length ||
+				memcmp(lua_name, native.name, lua_name_length) != 0)) {
+			(void)snprintf(name, sizeof(name), "%.*s [%.*s]",
+				(int)lua_name_length, lua_name, (int)native.name_length,
+				native.name);
+		}
+		else if (lua_name != NULL && lua_name_length != 0) {
+			(void)snprintf(name, sizeof(name), "%.*s", (int)lua_name_length,
+				lua_name);
+		}
+		else if (native.name_length != 0) {
+			(void)snprintf(name, sizeof(name), "%.*s",
+				(int)native.name_length, native.name);
+		}
+		else {
+			(void)snprintf(name, sizeof(name), "lua_CFunction@0x%" PRIxPTR,
+				(uintptr_t)frame->cfunction);
+		}
+		if (native_found && native.path_length != 0) {
+			filename = native.path;
+			filename_length = native.path_length;
+		}
+		else {
+			filename = "[C]";
+			filename_length = sizeof("[C]") - 1;
+		}
+		if (native.has_mapping && native.path_length != 0) {
+			*mapping_index = intern_mapping(model, native.mapping_start,
+				native.mapping_limit, native.mapping_offset, native.path,
+				native.path_length, lua_name_length != 0 ||
+					native.name_length != 0, false, false);
+			if (*mapping_index == UINT32_MAX) {
+				return false;
+			}
+		}
+	}
+	else if (frame->name != NULL && frame->name_length != 0) {
+		(void)snprintf(name, sizeof(name), "%.*s",
+			(int)frame->name_length, frame->name);
+		if (frame->source != NULL && frame->source_length != 0) {
+			filename = frame->source;
+			filename_length = frame->source_length;
+			if ((filename[0] == '@' || filename[0] == '=') &&
+				filename_length > 1) {
+				filename++;
+				filename_length--;
+			}
+		}
 	}
 	else if (frame->source != NULL && frame->source_length != 0) {
 		const char *source = frame->source;
@@ -308,8 +422,13 @@ format_function(lp_export_model *model, const lp_frame_desc *frame,
 			source++;
 			length--;
 		}
-		(void)snprintf(name, sizeof(name), "lua:%.*s:%d", (int)length,
-			source, frame->linedefined);
+		if (frame->linedefined == 0) {
+			(void)snprintf(name, sizeof(name), "main chunk");
+		}
+		else {
+			(void)snprintf(name, sizeof(name), "lua:%.*s:%d", (int)length,
+				source, frame->linedefined);
+		}
 		filename = source;
 		filename_length = length;
 	}
@@ -345,7 +464,9 @@ intern_function(lp_export_model *model, const lp_frame_desc *frame) {
 		}
 		int64_t name = -1;
 		int64_t filename = -1;
-		if (!format_function(model, frame, &name, &filename)) {
+		uint32_t mapping_index = 0;
+		if (!format_function(model, frame, &name, &filename,
+			&mapping_index)) {
 			return UINT32_MAX;
 		}
 		uint32_t index = (uint32_t)model->function_count++;
@@ -361,6 +482,7 @@ intern_function(lp_export_model *model, const lp_frame_desc *frame) {
 			.synthetic = frame->synthetic,
 			.name = name,
 			.filename = filename,
+			.mapping_index = mapping_index,
 		};
 		model->function_hash[slot] = index + 1u;
 		return index;
@@ -408,6 +530,7 @@ intern_location(lp_export_model *model, const lp_frame_desc *frame) {
 		model->locations[index] = (lp_export_location) {
 			.id = (uint64_t)index + 1,
 			.function_index = function_index,
+			.mapping_index = model->functions[function_index].mapping_index,
 			.line = line,
 			.address = frame->kind == LP_FRAME_C
 				? (uint64_t)(uintptr_t)frame->cfunction : 0,
@@ -440,6 +563,8 @@ frame_desc(const lp_frame_view *frame) {
 		.cfunction = frame->cfunction,
 		.source = frame->source,
 		.source_length = frame->source_length,
+		.name = frame->name,
+		.name_length = frame->name_length,
 		.linedefined = frame->linedefined,
 		.currentline = frame->currentline,
 	};
@@ -605,8 +730,9 @@ select_metric(lp_export_model *model, const char *requested) {
 
 static bool
 model_init(lp_export_model *model, const lp_result_meta *result,
-	const char *sample_type) {
+	const char *sample_type, const lp_export_symbols *symbols) {
 	memset(model, 0, sizeof(*model));
+	model->symbols = symbols;
 	if ((result->kind == LP_COLLECTOR_CPU &&
 		result->config.value.cpu.sample_hz == 0) ||
 		(result->kind == LP_COLLECTOR_MEMORY &&
@@ -623,6 +749,10 @@ model_init(lp_export_model *model, const lp_result_meta *result,
 		return false;
 	}
 	(void)add_literal(model, "");
+	if (intern_mapping(model, 0, 0, 0, "luaprof",
+		sizeof("luaprof") - 1, true, true, true) == UINT32_MAX) {
+		return false;
+	}
 	if (result->kind == LP_COLLECTOR_CPU) {
 		model->sample_names[0] = "samples";
 		model->sample_units[0] = "count";
@@ -681,6 +811,7 @@ model_dispose(lp_export_model *model) {
 	free(model->locations);
 	free(model->location_hash);
 	free(model->samples);
+	free(model->mappings);
 	memset(model, 0, sizeof(*model));
 }
 
@@ -724,6 +855,8 @@ emit_location(lp_buffer *profile, const lp_export_model *model,
 	const lp_export_location *location) {
 	lp_buffer message = { 0 };
 	buffer_field_varint(&message, 1, location->id);
+	buffer_field_varint(&message, 2,
+		model->mappings[location->mapping_index].id);
 	if (location->address != 0) {
 		buffer_field_varint(&message, 3, location->address);
 	}
@@ -739,6 +872,36 @@ emit_location(lp_buffer *profile, const lp_export_model *model,
 		profile->failed = true;
 	}
 	buffer_dispose(&line);
+	buffer_dispose(&message);
+}
+
+static void
+emit_mapping(lp_buffer *profile, const lp_export_mapping *mapping) {
+	lp_buffer message = { 0 };
+	buffer_field_varint(&message, 1, mapping->id);
+	if (mapping->start != 0) {
+		buffer_field_varint(&message, 2, mapping->start);
+	}
+	if (mapping->limit != 0) {
+		buffer_field_varint(&message, 3, mapping->limit);
+	}
+	if (mapping->offset != 0) {
+		buffer_field_varint(&message, 4, mapping->offset);
+	}
+	buffer_field_varint(&message, 5, (uint64_t)mapping->filename);
+	if (mapping->has_functions) {
+		buffer_field_varint(&message, 7, 1);
+	}
+	if (mapping->has_filenames) {
+		buffer_field_varint(&message, 8, 1);
+	}
+	if (mapping->has_line_numbers) {
+		buffer_field_varint(&message, 9, 1);
+	}
+	buffer_field_message(profile, 3, &message);
+	if (message.failed) {
+		profile->failed = true;
+	}
 	buffer_dispose(&message);
 }
 
@@ -777,6 +940,9 @@ encode_profile(const lp_export_model *model, lp_buffer *profile) {
 	}
 	for (size_t i = 0; i < model->sample_count; ++i) {
 		emit_sample(profile, &model->samples[i], model->value_count);
+	}
+	for (size_t i = 0; i < model->mapping_count; ++i) {
+		emit_mapping(profile, &model->mappings[i]);
 	}
 	for (size_t i = 0; i < model->location_count; ++i) {
 		emit_location(profile, model, &model->locations[i]);
@@ -877,9 +1043,9 @@ write_folded(const char *path, const lp_export_model *model, char *error,
 }
 
 bool
-lp_export_result(const lp_result_meta *result, const char *path,
-	lp_export_format format, const char *sample_type, char *error,
-	size_t error_capacity) {
+lp_export_result_with_symbols(const lp_result_meta *result, const char *path,
+	lp_export_format format, const char *sample_type,
+	const lp_export_symbols *symbols, char *error, size_t error_capacity) {
 	if (error != NULL && error_capacity != 0) {
 		error[0] = '\0';
 	}
@@ -890,7 +1056,7 @@ lp_export_result(const lp_result_meta *result, const char *path,
 		return false;
 	}
 	lp_export_model model;
-	if (!model_init(&model, result, sample_type)) {
+	if (!model_init(&model, result, sample_type, symbols)) {
 		set_error(error, error_capacity, "%s",
 			model.failure[0] == '\0' ? "cannot build profile" : model.failure);
 		model_dispose(&model);
@@ -914,4 +1080,12 @@ lp_export_result(const lp_result_meta *result, const char *path,
 	}
 	model_dispose(&model);
 	return success;
+}
+
+bool
+lp_export_result(const lp_result_meta *result, const char *path,
+	lp_export_format format, const char *sample_type, char *error,
+	size_t error_capacity) {
+	return lp_export_result_with_symbols(result, path, format, sample_type,
+		NULL, error, error_capacity);
 }

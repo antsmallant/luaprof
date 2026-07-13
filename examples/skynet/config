@@ -4,7 +4,7 @@ project_root = "../../"
 thread = 2
 logger = nil
 harbor = 0
-start = "luaprof_smoke"
+start = "$LUAPROF_SKYNET_SERVICE"
 bootstrap = "snlua bootstrap"
 
 cpath = root .. "cservice/?.so"

@@ -9,6 +9,7 @@
 #define LP_MEMORY_AGGREGATE_CAPACITY 2048u
 #define LP_MEMORY_SOURCE_CAPACITY (256u * 1024u)
 #define LP_MEMORY_MAX_SOURCE_LENGTH 1024u
+#define LP_MEMORY_MAX_NAME_LENGTH 255u
 #define LP_MEMORY_LIVE_CAPACITY 16384u
 #define LP_MEMORY_LIVE_BUCKET_CAPACITY 32768u
 #define LP_NO_SOURCE UINT32_MAX
@@ -27,6 +28,8 @@ typedef struct lp_memory_symbol {
 	size_t original_source_length;
 	uint32_t source_offset;
 	uint16_t source_length;
+	uint32_t name_offset;
+	uint16_t name_length;
 	int linedefined;
 	lp_frame_kind kind;
 	bool used;
@@ -308,6 +311,7 @@ intern_symbol(lp_memory_profile *profile, const lp_stack_frame *frame) {
 		symbol->source_hash = source_hash;
 		symbol->original_source_length = frame->source_length;
 		symbol->source_offset = LP_NO_SOURCE;
+		symbol->name_offset = LP_NO_SOURCE;
 		symbol->linedefined = frame->linedefined;
 		symbol->kind = frame->kind;
 		if (frame->source != NULL && frame->source_length != 0 &&
@@ -324,6 +328,29 @@ intern_symbol(lp_memory_profile *profile, const lp_stack_frame *frame) {
 				symbol->source_length = (uint16_t)copy_length;
 				memcpy(profile->sources + profile->source_used,
 					frame->source, copy_length);
+				profile->sources[profile->source_used + copy_length] = '\0';
+				profile->source_used += copy_length + 1;
+			}
+			else {
+				profile->sources_full = true;
+				profile->stats.symbol_overflows = saturating_add(
+					profile->stats.symbol_overflows, 1);
+			}
+		}
+		if (frame->name != NULL && frame->name_length != 0 &&
+			!profile->sources_full) {
+			size_t copy_length = frame->name_length;
+			if (copy_length > LP_MEMORY_MAX_NAME_LENGTH) {
+				copy_length = LP_MEMORY_MAX_NAME_LENGTH;
+				profile->stats.symbol_overflows = saturating_add(
+					profile->stats.symbol_overflows, 1);
+			}
+			if (copy_length + 1 <= LP_MEMORY_SOURCE_CAPACITY -
+				profile->source_used) {
+				symbol->name_offset = (uint32_t)profile->source_used;
+				symbol->name_length = (uint16_t)copy_length;
+				memcpy(profile->sources + profile->source_used,
+					frame->name, copy_length);
 				profile->sources[profile->source_used + copy_length] = '\0';
 				profile->source_used += copy_length + 1;
 			}
@@ -614,6 +641,10 @@ lp_memory_profile_frame(const lp_memory_profile *profile,
 	if (symbol->source_offset != LP_NO_SOURCE) {
 		frame->source = profile->sources + symbol->source_offset;
 		frame->source_length = symbol->source_length;
+	}
+	if (symbol->name_offset != LP_NO_SOURCE) {
+		frame->name = profile->sources + symbol->name_offset;
+		frame->name_length = symbol->name_length;
 	}
 	return true;
 }

@@ -16,6 +16,8 @@ SKYNET_BACKEND_SOURCE := src/skynet_backend.c
 SKYNET_HOST_SOURCE := src/skynet_host.c
 LUA_MODULE_SOURCE := src/lua_module.c
 LUA_BRIDGE_SOURCE := src/lua_bridge.c
+LUA_SYMBOLS_SOURCE := src/lua_symbols.c
+NATIVE_SYMBOL_SOURCE := src/native_symbol.c
 PPROF_EXPORTER_SOURCE := src/pprof_exporter.c
 RUNTIME_OBJECT := $(BUILD_DIR)/runtime.o
 CPU_CORE_OBJECT := $(BUILD_DIR)/cpu_core.o
@@ -27,11 +29,14 @@ SKYNET_INTEGRATION_HOST_OBJECT := $(SKYNET_BUILD_DIR)/skynet_host.o
 SKYNET_HOST_LIB := $(SKYNET_BUILD_DIR)/libluaprof-skynet-host.a
 LUA_MODULE_OBJECT := $(BUILD_DIR)/lua_module.o
 LUA_BRIDGE_OBJECT := $(BUILD_DIR)/lua_bridge.o
+LUA_SYMBOLS_OBJECT := $(BUILD_DIR)/lua_symbols.o
+NATIVE_SYMBOL_OBJECT := $(BUILD_DIR)/native_symbol.o
 PPROF_EXPORTER_OBJECT := $(BUILD_DIR)/pprof_exporter.o
 LUA_MODULE := $(BUILD_DIR)/luaprof.so
 SKYNET_THREAD_TIMER_OBJECT := $(SKYNET_BUILD_DIR)/thread_timer.o
 SKYNET_LUA_MODULE_OBJECT := $(SKYNET_BUILD_DIR)/lua_module.o
 SKYNET_LUA_BRIDGE_OBJECT := $(SKYNET_BUILD_DIR)/lua_bridge.o
+SKYNET_LUA_SYMBOLS_OBJECT := $(SKYNET_BUILD_DIR)/lua_symbols.o
 SKYNET_LUA_MODULE := $(SKYNET_BUILD_DIR)/luaprof.so
 SKYNET_VM_BRIDGE_TEST := $(SKYNET_BUILD_DIR)/vm-bridge-test
 SKYNET_VM_SAFE_POINT_BENCH := $(SKYNET_BUILD_DIR)/vm-safe-point-bench
@@ -49,6 +54,7 @@ CPU_CORE_TEST := $(BUILD_DIR)/cpu-core-test
 MEMORY_CORE_TEST := $(BUILD_DIR)/memory-core-test
 MEMORY_SAMPLING_TEST := $(BUILD_DIR)/memory-sampling-test
 PPROF_EXPORTER_TEST := $(BUILD_DIR)/pprof-exporter-test
+LUA_SYMBOLS_TEST := $(BUILD_DIR)/lua-symbols-test
 
 CC ?= cc
 AR ?= ar
@@ -58,7 +64,7 @@ LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-combined bench-disabled bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-skynet example-thread-vm lua module skynet skynet-lua skynet-module submodule-lua submodule-skynet test test-api test-combined-sampling test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-combined bench-disabled bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-skynet example-thread-vm lua module skynet skynet-lua skynet-module submodule-lua submodule-skynet test test-api test-combined-sampling test-cpu-core test-cpu-sampling test-lua-symbols test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -110,7 +116,7 @@ $(SKYNET_HOST_OBJECT): $(SKYNET_HOST_SOURCE) include/luaprof/skynet_host.h $(LUA
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -c $< -o $@
 
-$(LUA_MODULE_OBJECT): $(LUA_MODULE_SOURCE) src/pprof_exporter.h include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
+$(LUA_MODULE_OBJECT): $(LUA_MODULE_SOURCE) src/lua_symbols.h src/pprof_exporter.h include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-DLUAPROF_EXPECT_LUA_VERSION=504 \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -c $< -o $@
@@ -119,11 +125,19 @@ $(LUA_BRIDGE_OBJECT): $(LUA_BRIDGE_SOURCE) src/lua_bridge.h src/skynet_backend.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc -c $< -o $@
 
-$(PPROF_EXPORTER_OBJECT): $(PPROF_EXPORTER_SOURCE) src/pprof_exporter.h include/luaprof/runtime.h | $(BUILD_DIR)
+$(LUA_SYMBOLS_OBJECT): $(LUA_SYMBOLS_SOURCE) src/lua_symbols.h include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc -c $< -o $@
+
+$(NATIVE_SYMBOL_OBJECT): $(NATIVE_SYMBOL_SOURCE) src/native_symbol.h | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
+		-Isrc -c $< -o $@
+
+$(PPROF_EXPORTER_OBJECT): $(PPROF_EXPORTER_SOURCE) src/pprof_exporter.h src/native_symbol.h include/luaprof/runtime.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -Isrc -c $< -o $@
 
-$(LUA_MODULE): $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(PPROF_EXPORTER_OBJECT) $(LUA_MODULE_OBJECT)
+$(LUA_MODULE): $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_SYMBOLS_OBJECT) $(NATIVE_SYMBOL_OBJECT) $(PPROF_EXPORTER_OBJECT) $(LUA_MODULE_OBJECT)
 	$(CC) $(LDFLAGS) -shared $^ $(LDLIBS) -lm -lz -ldl -pthread -lrt -o $@
 
 $(SKYNET_THREAD_TIMER_OBJECT): $(THREAD_TIMER_SOURCE) src/thread_timer.h include/luaprof/runtime.h $(SKYNET_LUA_LIB) | $(SKYNET_BUILD_DIR)
@@ -137,7 +151,7 @@ $(SKYNET_INTEGRATION_HOST_OBJECT): $(SKYNET_HOST_SOURCE) include/luaprof/skynet_
 $(SKYNET_HOST_LIB): $(SKYNET_INTEGRATION_HOST_OBJECT) | $(SKYNET_BUILD_DIR)
 	$(AR) rcs $@ $^
 
-$(SKYNET_LUA_MODULE_OBJECT): $(LUA_MODULE_SOURCE) src/pprof_exporter.h include/luaprof/runtime.h $(SKYNET_LUA_LIB) | $(SKYNET_BUILD_DIR)
+$(SKYNET_LUA_MODULE_OBJECT): $(LUA_MODULE_SOURCE) src/lua_symbols.h src/pprof_exporter.h include/luaprof/runtime.h $(SKYNET_LUA_LIB) | $(SKYNET_BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-DLUAPROF_EXPECT_LUA_VERSION=505 \
 		-I$(INCLUDE_DIR) -I$(SKYNET_LUA_DIR) -c $< -o $@
@@ -146,7 +160,11 @@ $(SKYNET_LUA_BRIDGE_OBJECT): $(LUA_BRIDGE_SOURCE) src/lua_bridge.h src/skynet_ba
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(SKYNET_LUA_DIR) -Isrc -c $< -o $@
 
-$(SKYNET_LUA_MODULE): $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(SKYNET_THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(SKYNET_LUA_BRIDGE_OBJECT) $(PPROF_EXPORTER_OBJECT) $(SKYNET_LUA_MODULE_OBJECT) | $(SKYNET_BUILD_DIR)
+$(SKYNET_LUA_SYMBOLS_OBJECT): $(LUA_SYMBOLS_SOURCE) src/lua_symbols.h include/luaprof/runtime.h $(SKYNET_LUA_LIB) | $(SKYNET_BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
+		-I$(INCLUDE_DIR) -I$(SKYNET_LUA_DIR) -Isrc -c $< -o $@
+
+$(SKYNET_LUA_MODULE): $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(SKYNET_THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(SKYNET_LUA_BRIDGE_OBJECT) $(SKYNET_LUA_SYMBOLS_OBJECT) $(NATIVE_SYMBOL_OBJECT) $(PPROF_EXPORTER_OBJECT) $(SKYNET_LUA_MODULE_OBJECT) | $(SKYNET_BUILD_DIR)
 	$(CC) $(LDFLAGS) -shared $^ $(LDLIBS) -lm -lz -ldl -pthread -lrt -o $@
 
 skynet-module: $(SKYNET_LUA_MODULE)
@@ -163,9 +181,14 @@ $(MEMORY_CORE_TEST): tests/unit/memory_core_test.c $(MEMORY_CORE_OBJECT) | $(BUI
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(INCLUDE_DIR) -Isrc $(LDFLAGS) $^ $(LDLIBS) -lm -o $@
 
-$(PPROF_EXPORTER_TEST): tests/unit/pprof_exporter_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(PPROF_EXPORTER_OBJECT) | $(BUILD_DIR)
+$(PPROF_EXPORTER_TEST): tests/unit/pprof_exporter_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(NATIVE_SYMBOL_OBJECT) $(PPROF_EXPORTER_OBJECT) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
-		-I$(INCLUDE_DIR) -Isrc $(LDFLAGS) $^ $(LDLIBS) -lm -lz -o $@
+		-I$(INCLUDE_DIR) -Isrc $(LDFLAGS) $^ $(LDLIBS) -lm -lz -ldl -o $@
+
+$(LUA_SYMBOLS_TEST): tests/unit/lua_symbols_test.c $(LUA_SYMBOLS_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
+		-lm -ldl -o $@
 
 $(DISABLED_BENCH): tests/bench/disabled_runtime.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
@@ -236,7 +259,7 @@ example-thread-vm: module
 		$(BUILD_DIR)/thread-vm-cpu.pb.gz \
 		$(BUILD_DIR)/thread-vm-heap.pb.gz
 
-test: test-thread-vm test-runtime test-cpu-core test-memory-core test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
+test: test-thread-vm test-runtime test-cpu-core test-memory-core test-lua-symbols test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
 test-thread-vm: thread-vm
 	./tests/integration/thread_vm.sh
@@ -249,6 +272,9 @@ test-cpu-core: $(CPU_CORE_TEST)
 
 test-memory-core: $(MEMORY_CORE_TEST)
 	$(MEMORY_CORE_TEST)
+
+test-lua-symbols: $(LUA_SYMBOLS_TEST)
+	$(LUA_SYMBOLS_TEST)
 
 test-pprof-exporter: $(PPROF_EXPORTER_TEST)
 	$(PPROF_EXPORTER_TEST)
@@ -301,4 +327,7 @@ test-skynet: skynet $(SKYNET_VM_BRIDGE_TEST)
 		tests/lua/api_test.lua
 	./tests/integration/skynet.sh
 
-example-skynet: test-skynet
+example-skynet: skynet
+	LUAPROF_SKYNET_SERVICE=luaprof_demo \
+	LUAPROF_EXPECT_OUTPUT="luaprof skynet demo: ok" \
+	LUAPROF_OUTPUT_DIR="$(BUILD_DIR)" ./tests/integration/skynet.sh

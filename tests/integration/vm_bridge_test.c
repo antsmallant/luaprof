@@ -27,6 +27,7 @@ typedef struct bridge_stats {
 	int saw_closethread_restore;
 	int saw_main_block_free;
 	int saw_lua_frame;
+	int saw_named_lua_frame;
 	int saw_truncated_stack;
 	lua_State *last_event_state;
 } bridge_stats;
@@ -84,6 +85,9 @@ safe_point(void *userdata, lua_State *L, unsigned int pending) {
 			assert(frames[i].source_length != 0);
 			assert(frames[i].currentline > 0);
 			stats->saw_lua_frame = 1;
+			if (frames[i].name != NULL && frames[i].name_length != 0) {
+				stats->saw_named_lua_frame = 1;
+			}
 		}
 		else {
 			assert(frames[i].kind == LUA_PROFILE_FRAME_C);
@@ -339,6 +343,7 @@ main(void) {
 	assert(stats.safe_calls >= 3);
 	assert(stats.safe_weight == 24);
 	assert(stats.saw_lua_frame);
+	assert(stats.saw_named_lua_frame);
 	assert(stats.saw_truncated_stack);
 	assert(stats.states[LUA_PROFILE_LUA] != 0);
 	assert(stats.states[LUA_PROFILE_C] != 0);

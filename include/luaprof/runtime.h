@@ -96,6 +96,8 @@ typedef struct lp_stack_frame {
 	lp_lua_cfunction cfunction;
 	const char *source;
 	size_t source_length;
+	const char *name;
+	size_t name_length;
 	int linedefined;
 	int currentline;
 } lp_stack_frame;
@@ -113,6 +115,8 @@ typedef struct lp_frame_view {
 	lp_lua_cfunction cfunction;
 	const char *source;
 	size_t source_length;
+	const char *name;
+	size_t name_length;
 	int linedefined;
 	int currentline;
 } lp_frame_view;

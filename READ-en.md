@@ -45,9 +45,17 @@ Inspect them with standard pprof tooling:
 
 ```sh
 go tool pprof -top build/thread-vm-cpu.pb.gz
+go tool pprof -lines -top build/thread-vm-cpu.pb.gz
+go tool pprof -list=calculate_orders build/thread-vm-cpu.pb.gz
 go tool pprof -sample_index=alloc_space -top build/thread-vm-heap.pb.gz
 go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 ```
+
+The default `-top` aggregates by function; the example should show hotspots
+such as `calculate_orders`, `calculate_discounts`, and
+`tostring [luaB_tostring]`. `-lines -top` splits by the actual executing line,
+while `-list` annotates the corresponding source lines. The main chunk is
+shown as `main chunk` instead of `profile.lua:0`.
 
 `make` initializes only the required Lua submodule. `make test` runs the core,
 thread-per-VM and exporter tests; Skynet and its direct submodule are initialized
@@ -105,11 +113,20 @@ handler. At the next VM safe point, the recorder drains pending ticks and
 captures the Lua stack.
 
 Ticks in a long C call retain the `lua_CFunction` pointer and the Lua caller.
-The exporter names the leaf `lua_CFunction@0x...`; it does not require native
-symbols and does not claim to reconstruct the native C stack. GC and host states
-are emitted as synthetic frames. This is sufficient to locate which Lua call
-entered expensive C code, but native hot lines require a separate native
-profiler.
+At export time, outside all hot paths, the profiler scans CFunction bindings in
+`_G` and `package.loaded` and reads local ELF mappings and symbol tables. It
+prefers a Lua-visible binding name, then a native symbol, and finally the raw
+`lua_CFunction@0x...` address. When distinct Lua and native names are both
+available, the result is displayed as `tostring [luaB_tostring]`. Aliases for
+the same pointer are resolved by shortest name and then lexicographically.
+
+This work happens only in `result:write()`, never in the signal handler,
+allocation callback, or VM instruction fast path. The address fallback remains
+when the binary is stripped or moved, is not ELF, or the binding scan does not
+cover the function. Profiles include the local mapping path; subsequent native
+symbolization on another machine needs the matching original binary. This still
+identifies only the active `lua_CFunction`, not a native C stack. Use a native
+profiler to find native hot lines. GC and host states are synthetic frames.
 
 Important CPU statistics are:
 
@@ -181,6 +198,12 @@ contain `alloc_objects/count`, `alloc_space/bytes`, `inuse_objects/count` and
 `inuse_space/bytes`. The default sample is `cpu`, `alloc_space` when free
 tracking is disabled, and `inuse_space` when it is enabled.
 
+A Lua frame's function name, definition line, and current execution line are
+separate data. The default pprof function view uses the function name, while
+`-lines` and `-list` use current execution lines. Lua call names are best-effort
+names inferred by the VM at the sample point; anonymous calls fall back to the
+source and definition line.
+
 Examples of alternate reports are:
 
 ```sh
@@ -206,8 +229,27 @@ Build and run the two-worker example explicitly:
 make example-skynet
 ```
 
-The service in `examples/skynet/luaprof_smoke.lua` starts CPU and in-use memory
-recorders together and validates that CPU continues after memory stops. The
+`make example-skynet` runs the longer diagnostic workload in
+`examples/skynet/luaprof_demo.lua` and writes:
+
+```text
+build/skynet-cpu.pb.gz
+build/skynet-heap.pb.gz
+```
+
+Inspect functions, executing lines, and annotated source with:
+
+```sh
+go tool pprof -top build/skynet-cpu.pb.gz
+go tool pprof -lines -top build/skynet-cpu.pb.gz
+go tool pprof -source_path=examples/skynet -list=calculate_orders build/skynet-cpu.pb.gz
+go tool pprof -sample_index=inuse_space -top build/skynet-heap.pb.gz
+```
+
+Skynet loads `../../examples/...` while running under `integration/skynet`, so
+`-list` needs the shown `-source_path` when invoked at the repository root.
+`tests/integration/skynet.sh` runs the shorter `luaprof_smoke.lua` by default;
+that service is a CI lifecycle/shared-table regression, not a hotspot demo. The
 Skynet fork links a small host library into the executable, publishes the target
 VM at service dispatch boundaries and maintains one CPU timer per worker.
 
@@ -243,13 +285,18 @@ Hot-path storage is preallocated and does not grow during recording:
 | Captured stack depth | 64 frames |
 | CPU symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
 | Memory symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
+| Inferred call name per sampled Lua function | 255 bytes |
 | Sampled live blocks with `track_free` | 16384 |
 | Thread or Skynet timer event ring | 4096 entries |
 | Thread timers / Skynet targets / Skynet workers | 64 / 128 / 64 |
 
-Source names longer than 1024 bytes are truncated. When a bound is reached,
-recording remains bounded and the corresponding drop, truncation or overflow
-counter increases. Exporting happens after stop and may allocate memory.
+Source names longer than 1024 bytes and inferred Lua names longer than 255 bytes
+are truncated and increment `symbol_overflows`. When a recording bound is
+reached, storage remains bounded and the corresponding drop, truncation or
+overflow counter increases. Exporting happens after stop and may allocate. The
+export-time Lua-visible CFunction scan has separate limits of 4096 functions,
+4096 tables, six levels, and 255-byte names; uncovered functions still try
+native symbols and ultimately retain the raw address fallback.
 
 ## Supported scope
 
@@ -286,5 +333,5 @@ exact pinned commits without downloading unused nested dependencies.
 Profiling changes for Skynet Lua belong in `integration/skynet/3rd/lua` and are
 committed as part of the Skynet fork. Do not replace that tree with the parent
 Lua fork or pass parent `LUA_INC`/`LUA_LIB` values into the Skynet build. Both
-Lua trees expose profiler bridge ABI version 1 and run the same bridge contract
+Lua trees expose profiler bridge ABI version 2 and run the same bridge contract
 test, while retaining their own VM ABI and host-specific behavior.

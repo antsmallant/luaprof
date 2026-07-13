@@ -1,4 +1,5 @@
 #include "luaprof/runtime.h"
+#include "native_symbol.h"
 #include "pprof_exporter.h"
 
 #include <assert.h>
@@ -15,6 +16,7 @@ typedef struct profile_summary {
 	size_t samples;
 	size_t locations;
 	size_t functions;
+	size_t mappings;
 	size_t strings;
 	size_t expected_values;
 	uint64_t max_location_reference;
@@ -29,12 +31,29 @@ typedef struct profile_summary {
 	bool saw_cpu_source;
 	bool saw_memory_source;
 	bool saw_cfunction;
+	bool saw_raw_cfunction;
 } profile_summary;
 
 static int
 profiled_cfunction(lua_State *L) {
 	(void)L;
 	return 0;
+}
+
+static lp_lua_cfunction
+unresolved_cfunction(void) {
+	return (lp_lua_cfunction)(uintptr_t)1;
+}
+
+static const char *
+cfunction_name(void *userdata, lp_lua_cfunction function, size_t *length) {
+	(void)userdata;
+	if (function == profiled_cfunction) {
+		*length = sizeof("visible.profiled") - 1u;
+		return "visible.profiled";
+	}
+	*length = 0;
+	return NULL;
 }
 
 static bool
@@ -273,7 +292,7 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 		}
 		unsigned int field = (unsigned int)(key >> 3);
 		unsigned int wire = (unsigned int)(key & 7u);
-		if ((field == 1 || field == 2 || field == 4 || field == 5 ||
+		if ((field == 1 || field == 2 || field == 3 || field == 4 || field == 5 ||
 			field == 6 || field == 11) && wire == 2) {
 			const unsigned char *message;
 			size_t length;
@@ -294,6 +313,9 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 				if (!parse_location(message, length, summary)) {
 					return false;
 				}
+			}
+			else if (field == 3) {
+				summary->mappings++;
 			}
 			else if (field == 5) {
 				summary->functions++;
@@ -316,7 +338,9 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 				summary->saw_memory_source |=
 					bytes_contain(message, length, "pprof_memory.lua");
 				summary->saw_cfunction |=
-					bytes_contain(message, length, "lua_CFunction@0x");
+					bytes_contain(message, length, "profiled_cfunction");
+				summary->saw_raw_cfunction |=
+					bytes_contain(message, length, "lua_CFunction@0x1");
 			}
 			else {
 				summary->saw_period_type = true;
@@ -340,6 +364,7 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 	}
 	return summary->sample_types == values && summary->samples != 0 &&
 		summary->locations != 0 && summary->functions != 0 &&
+		summary->mappings != 0 &&
 		summary->saw_empty_string_first && summary->saw_period_type &&
 		summary->saw_period && summary->default_sample_type < summary->strings &&
 		summary->max_location_reference <= summary->locations &&
@@ -408,11 +433,15 @@ cpu_result(void) {
 		.function = runtime,
 		.source = "@pprof_cpu.lua",
 		.source_length = sizeof("@pprof_cpu.lua") - 1,
+		.name = "cpu_work",
+		.name_length = sizeof("cpu_work") - 1,
 		.linedefined = 10,
 		.currentline = 12,
 	};
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, profiled_cfunction,
 		&frame, 1, false, 3);
+	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, unresolved_cfunction(),
+		&frame, 1, false, 1);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_GC, NULL, &frame, 1,
 		false, 2);
 	lp_result_meta result;
@@ -453,6 +482,8 @@ memory_result(void) {
 		.function = runtime,
 		.source = "@pprof_memory.lua",
 		.source_length = sizeof("@pprof_memory.lua") - 1,
+		.name = "memory_work",
+		.name_length = sizeof("memory_work") - 1,
 		.linedefined = 20,
 		.currentline = 22,
 	};
@@ -476,12 +507,22 @@ main(void) {
 	const char *memory_path = "/tmp/luaprof-pprof-memory.pb.gz";
 	const char *memory_folded = "/tmp/luaprof-pprof-memory.folded";
 	char error[256];
+	lp_native_symbol native;
+	memset(&native, 0xff, sizeof(native));
+	assert(!lp_native_symbol_resolve(NULL, &native));
+	assert(native.name_length == 0 && native.path_length == 0);
+	assert(!native.has_mapping);
+	assert(!lp_native_symbol_resolve((const void *)(uintptr_t)1, &native));
+	assert(!lp_native_symbol_resolve(NULL, NULL));
 
 	lp_result_meta cpu = cpu_result();
 	assert(lp_export_result(&cpu, cpu_path, LP_EXPORT_PPROF, NULL, error,
 		sizeof(error)));
-	assert(lp_export_result(&cpu, cpu_folded, LP_EXPORT_FOLDED, "samples",
-		error, sizeof(error)));
+	lp_export_symbols symbols = {
+		.cfunction_name = cfunction_name,
+	};
+	assert(lp_export_result_with_symbols(&cpu, cpu_folded, LP_EXPORT_FOLDED,
+		"samples", &symbols, error, sizeof(error)));
 	size_t size;
 	unsigned char *data = read_gzip(cpu_path, &size);
 	profile_summary summary;
@@ -489,10 +530,13 @@ main(void) {
 	assert(summary.saw_cpu);
 	assert(summary.saw_cpu_source);
 	assert(summary.saw_cfunction);
+	assert(summary.saw_raw_cfunction);
 	free(data);
 	char *folded = read_text(cpu_folded);
-	assert(strstr(folded, "pprof_cpu.lua") != NULL);
-	assert(strstr(folded, "lua_CFunction@0x") != NULL);
+	assert(strstr(folded, "cpu_work") != NULL);
+	assert(strstr(folded,
+		"visible.profiled [profiled_cfunction]") != NULL);
+	assert(strstr(folded, "lua_CFunction@0x1") != NULL);
 	free(folded);
 	lp_result_meta_dispose(&cpu);
 
@@ -510,7 +554,7 @@ main(void) {
 	assert(summary.saw_memory_source);
 	free(data);
 	folded = read_text(memory_folded);
-	assert(strstr(folded, "pprof_memory.lua") != NULL);
+	assert(strstr(folded, "memory_work") != NULL);
 	assert(strstr(folded, " 192\n") != NULL);
 	free(folded);
 	lp_result_meta_dispose(&memory);

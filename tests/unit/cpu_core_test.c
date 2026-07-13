@@ -15,6 +15,8 @@ test_aggregate_bound(void) {
 		.function = profile,
 		.source = "@aggregate_bound.lua",
 		.source_length = sizeof("@aggregate_bound.lua") - 1,
+		.name = "aggregate_work",
+		.name_length = sizeof("aggregate_work") - 1,
 		.linedefined = 1,
 	};
 	for (int line = 1; line <= 5000; ++line) {
@@ -59,7 +61,9 @@ test_source_and_stack_bound(void) {
 	lp_cpu_profile *profile = lp_cpu_profile_new();
 	assert(profile != NULL);
 	char source[2048];
+	char name[300];
 	memset(source, 'x', sizeof(source));
+	memset(name, 'n', sizeof(name));
 	lp_stack_frame frames[65];
 	for (size_t i = 0; i < 65; ++i) {
 		frames[i] = (lp_stack_frame) {
@@ -67,6 +71,8 @@ test_source_and_stack_bound(void) {
 			.function = (const void *)(uintptr_t)(i + 1),
 			.source = source,
 			.source_length = sizeof(source),
+			.name = name,
+			.name_length = sizeof(name),
 			.linedefined = (int)i,
 			.currentline = (int)i + 1,
 		};
@@ -84,6 +90,8 @@ test_source_and_stack_bound(void) {
 	assert(lp_cpu_profile_frame(profile, 0, 0, &frame));
 	assert(frame.source != NULL);
 	assert(frame.source_length == 1024);
+	assert(frame.name != NULL);
+	assert(frame.name_length == 255);
 	lp_cpu_profile_delete(profile);
 }
 

@@ -41,9 +41,16 @@ build/thread-vm-heap.pb.gz
 
 ```sh
 go tool pprof -top build/thread-vm-cpu.pb.gz
+go tool pprof -lines -top build/thread-vm-cpu.pb.gz
+go tool pprof -list=calculate_orders build/thread-vm-cpu.pb.gz
 go tool pprof -sample_index=alloc_space -top build/thread-vm-heap.pb.gz
 go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 ```
+
+默认 `-top` 按函数聚合，示例应能看到 `calculate_orders`、
+`calculate_discounts` 和 `tostring [luaB_tostring]` 等热点。`-lines -top`
+按实际执行行拆分，`-list` 则把采样权重标到对应源码行。主 chunk 稳定显示为
+`main chunk`，不再显示成 `profile.lua:0`。
 
 `make` 只初始化必需的 Lua submodule。`make test` 运行 core、thread-per-VM 和 exporter
 测试；只有显式的 Skynet target 才会初始化 Skynet 及其直接 submodule。
@@ -96,10 +103,19 @@ thread-per-VM backend 使用 `CLOCK_THREAD_CPUTIME_ID`。timer tick 只记录很
 状态快照，不会在 signal handler 中遍历 Lua 或 native stack。recorder 在下一个 VM
 safe point 消费 pending tick 并捕获 Lua stack。
 
-发生在长时间 C 调用中的 tick 会保留 `lua_CFunction` 指针和 Lua caller。exporter
-把 leaf 命名为 `lua_CFunction@0x...`；它不依赖 native symbol，也不声称能够还原
-native C stack。GC 和 host 状态以 synthetic frame 输出。这足以定位哪个 Lua 调用进入
-了高开销 C 代码；要定位 native hot line，需要另用 native profiler。
+发生在长时间 C 调用中的 tick 会保留 `lua_CFunction` 指针和 Lua caller。导出时，
+profiler 在非热路径扫描 `_G` 与 `package.loaded` 中的 CFunction 绑定，并读取本机 ELF
+mapping/symbol table。名称按以下顺序选择：Lua 可见绑定名、native symbol、原始
+`lua_CFunction@0x...` 地址；两种名称都存在且不同时会显示为
+`tostring [luaB_tostring]`。同一指针有多个 Lua 别名时选择最短名称，同长度再按字典序
+选择。
+
+这些步骤只发生在 `result:write()`，不会进入 signal handler、allocation callback 或
+VM instruction fast path。二进制被 strip、文件已移动、不是 ELF，或绑定扫描未覆盖时，
+地址 fallback 仍然保留。profile 会写入本机 mapping path；在另一台机器继续做 native
+symbolization 时需要匹配的原二进制。这里仍然只表示当前 `lua_CFunction`，不还原 native
+C stack；定位 native hot line 需要另用 native profiler。GC 和 host 状态以 synthetic
+frame 输出。
 
 重要的 CPU 统计项包括：
 
@@ -162,6 +178,10 @@ CPU profile 包含 `samples/count` 和 `cpu/nanoseconds`。Memory profile 包含
 `inuse_space/bytes`。默认 sample 对 CPU 是 `cpu`；关闭 free tracking 时是
 `alloc_space`；启用时是 `inuse_space`。
 
+Lua frame 的函数名、定义行和当前执行行是相互独立的数据。pprof 默认函数视图使用
+函数名；`-lines` 和 `-list` 使用当前执行行。Lua 的调用名是 VM 在采样点能够推断出的
+best-effort 名称；匿名调用无法推断时回退到 source/definition line。
+
 其他报告示例：
 
 ```sh
@@ -187,10 +207,28 @@ assert(memory_result:write("heap.folded", {
 make example-skynet
 ```
 
-`examples/skynet/luaprof_smoke.lua` 中的 service 会同时启动 CPU 和 in-use memory
-recorder，并验证 memory 停止后 CPU 仍继续运行。Skynet fork 将一个小型 host library
-链接到可执行文件中，在 service dispatch 边界发布目标 VM，并为每个 worker 维护一个
-CPU timer。
+`make example-skynet` 运行 `examples/skynet/luaprof_demo.lua` 中较长的诊断 workload，
+并生成：
+
+```text
+build/skynet-cpu.pb.gz
+build/skynet-heap.pb.gz
+```
+
+查看函数、执行行和源码列表：
+
+```sh
+go tool pprof -top build/skynet-cpu.pb.gz
+go tool pprof -lines -top build/skynet-cpu.pb.gz
+go tool pprof -source_path=examples/skynet -list=calculate_orders build/skynet-cpu.pb.gz
+go tool pprof -sample_index=inuse_space -top build/skynet-heap.pb.gz
+```
+
+Skynet 从 `integration/skynet` 加载 `../../examples/...`，因此从仓库根目录运行 `-list`
+时需要上述 `-source_path`。`tests/integration/skynet.sh` 默认运行更短的
+`luaprof_smoke.lua`，只承担 CI lifecycle/shared-table 回归，不用于展示热点结论。
+Skynet fork 将一个小型 host library 链接到可执行文件中，在 service dispatch 边界发布
+目标 VM，并为每个 worker 维护一个 CPU timer。
 
 两个宿主有意使用不同 Lua ABI 的构建产物：
 
@@ -223,12 +261,16 @@ make bench-skynet-combined
 | 捕获的 stack 深度 | 64 frames |
 | CPU symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
 | Memory symbols / stack aggregates / source bytes | 4096 / 2048 / 256KiB |
+| 每个采样 Lua 函数的调用名 | 255 bytes |
 | 使用 `track_free` 时的 sampled live blocks | 16384 |
 | Thread 或 Skynet timer event ring | 4096 entries |
 | Thread timers / Skynet targets / Skynet workers | 64 / 128 / 64 |
 
-超过 1024 bytes 的 source name 会被截断。达到上限后，recording 仍保持有界，对应的
-drop、truncation 或 overflow 计数器会增加。导出在 stop 后执行，期间可以分配内存。
+超过 1024 bytes 的 source name 和超过 255 bytes 的 Lua 调用名会被截断，并增加
+`symbol_overflows`。达到 recording 上限后仍保持有界，对应的 drop、truncation 或
+overflow 计数器会增加。导出在 stop 后执行，期间可以分配内存；导出期 Lua-visible
+CFunction 扫描另有 4096 function、4096 table、6 层和 255-byte 名称上限，未覆盖的
+函数继续尝试 native symbol，最终保留地址 fallback。
 
 ## 支持范围
 
@@ -262,5 +304,5 @@ commit，且不会下载未使用的嵌套依赖。
 
 Skynet Lua 的 profiling 修改应放在 `integration/skynet/3rd/lua` 中，并作为 Skynet
 fork 的一部分提交。不要用父项目 Lua fork 替换该目录，也不要把父项目的 `LUA_INC`/
-`LUA_LIB` 传入 Skynet 构建。两棵 Lua 源码树都暴露 profiler bridge ABI version 1，
+`LUA_LIB` 传入 Skynet 构建。两棵 Lua 源码树都暴露 profiler bridge ABI version 2，
 运行相同的 bridge contract test，同时保留各自的 VM ABI 和宿主特定行为。

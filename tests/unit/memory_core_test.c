@@ -23,6 +23,8 @@ test_frame(int line) {
 		.function = (const void *)(uintptr_t)1,
 		.source = source,
 		.source_length = sizeof(source) - 1,
+		.name = "memory_work",
+		.name_length = sizeof("memory_work") - 1,
 		.linedefined = 1,
 		.currentline = line,
 	};
@@ -99,6 +101,8 @@ test_budget_and_exact_mode(void) {
 	assert(lp_memory_profile_frame(exact, 0, 0, &view));
 	assert(view.currentline == 10);
 	assert(view.source_length == sizeof("@memory_core_test.lua") - 1);
+	assert(view.name_length == sizeof("memory_work") - 1);
+	assert(memcmp(view.name, "memory_work", view.name_length) == 0);
 	lp_memory_profile_delete(exact);
 }
 
