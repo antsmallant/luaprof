@@ -1,23 +1,25 @@
 # luaprof
 
-`luaprof` is a sampling profiler for PUC Lua 5.4.8. CPU and memory
-recorders are independent, and the same API works in Linux thread-per-VM hosts
-and supported Skynet services. V1 intentionally does not include call/return
-tracing.
+`luaprof` is a sampling profiler for PUC Lua. CPU and memory recorders are
+independent, and the same API works in Linux thread-per-VM hosts using the
+pinned Lua 5.4.8 fork and in supported Skynet services using Skynet's pinned,
+customized Lua 5.5. V1 intentionally does not include call/return tracing.
 
 ## Requirements
 
 - Linux with POSIX per-thread CPU timers and lock-free pointer, integer and
   64-bit atomics
 - A C11 compiler, GNU Make, POSIX threads and zlib development files
-- The pinned `lua-5.4.8` fork in `3rd/`; stock Lua does not expose the required
-  profiling bridge
+- The pinned `lua-5.4.8` fork in `3rd/` for the default build; stock Lua does
+  not expose the required profiling bridge
 - GitHub SSH access for initializing the configured submodule URLs
 - Go's `pprof` command for reading the default output; Graphviz is additionally
   required for SVG and graph-based web reports
 
 The profiler core does not depend on Skynet. Skynet support is an explicit host
-integration through the pinned fork in `integration/skynet`.
+integration through the pinned fork in `integration/skynet`; that target keeps
+Skynet's own Lua, including its seeded state creation, code cache and shared
+Proto/table support.
 
 ## Quick start
 
@@ -207,9 +209,28 @@ recorders together and validates that CPU continues after memory stops. The
 Skynet fork links a small host library into the executable, publishes the target
 VM at service dispatch boundaries and maintains one CPU timer per worker.
 
+The two hosts intentionally use different Lua ABI builds:
+
+```text
+build/luaprof.so          Lua 5.4.8 thread-per-VM module
+build/skynet/luaprof.so   Skynet customized Lua 5.5 module
+```
+
+`make test-skynet` builds Skynet against `integration/skynet/3rd/lua`; it does
+not pass the parent project's `LUA_INC` or `LUA_LIB`. The target checks the
+linked symbols, runs the VM bridge and Lua API suites against Skynet's Lua, and
+then runs the real two-worker service with shared-table coverage.
+
 Multiple Skynet services may record CPU concurrently, but all active CPU
 recorders currently must use the same `sample_hz`. Service migration, stale
 ticks, worker shutdown and concurrent stop are covered by the scheduler tests.
+
+Run the same VM and combined-profiler benchmarks against Skynet's Lua with:
+
+```sh
+make bench-skynet-vm
+make bench-skynet-combined
+```
 
 ## Fixed bounds
 
@@ -230,13 +251,14 @@ counter increases. Exporting happens after stop and may allocate memory.
 
 ## Supported scope
 
-- PUC Lua 5.4.8 at the exact parent-repository gitlink
+- PUC Lua 5.4.8 at the exact parent-repository gitlink for thread-per-VM hosts
 - Linux thread-per-VM hosts where a VM remains on its owner OS thread
-- The pinned Skynet fork, where a VM may move serially between workers
+- The pinned Skynet fork with its customized Lua 5.5, where a VM may move
+  serially between workers
 - Lua and coroutine stacks up to the documented fixed depth
 
-Stock Lua, other Lua versions, Windows/macOS, native C stack unwinding, tracing,
-allocation timelines and VM object snapshots are outside V1.
+Stock Lua, unlisted Lua versions, Windows/macOS, native C stack unwinding,
+tracing, allocation timelines and VM object snapshots are outside V1.
 
 ## Submodule development
 
@@ -258,3 +280,9 @@ git commit -m "build: update Lua submodule"
 Use the same sequence for `integration/skynet`. A fresh checkout should use
 `git submodule update --init 3rd/lua-5.4.8 integration/skynet` to restore the
 exact pinned commits without downloading unused nested dependencies.
+
+Profiling changes for Skynet Lua belong in `integration/skynet/3rd/lua` and are
+committed as part of the Skynet fork. Do not replace that tree with the parent
+Lua fork or pass parent `LUA_INC`/`LUA_LIB` values into the Skynet build. Both
+Lua trees expose profiler bridge ABI version 1 and run the same bridge contract
+test, while retaining their own VM ABI and host-specific behavior.

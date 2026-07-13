@@ -60,6 +60,15 @@ test_allocator(void *userdata, void *pointer, size_t old_size,
 	return result;
 }
 
+static lua_State *
+new_test_state(allocator_context *allocator) {
+#if defined(LUAPROF_LUA_EXPLICIT_SEED)
+	return lua_newstate(test_allocator, allocator, luaL_makeseed(NULL));
+#else
+	return lua_newstate(test_allocator, allocator);
+#endif
+}
+
 static void
 safe_point(void *userdata, lua_State *L, unsigned int pending) {
 	bridge_stats *stats = userdata;
@@ -293,7 +302,7 @@ force_realloc_failure(lua_State *L, allocator_context *allocator) {
 int
 main(void) {
 	allocator_context allocator = { 0 };
-	lua_State *L = lua_newstate(test_allocator, &allocator);
+	lua_State *L = new_test_state(&allocator);
 	assert(L != NULL);
 	luaL_openlibs(L);
 
@@ -360,7 +369,7 @@ main(void) {
 	lua_close(L);
 
 	allocator_context close_allocator = { 0 };
-	lua_State *closing = lua_newstate(test_allocator, &close_allocator);
+	lua_State *closing = new_test_state(&close_allocator);
 	assert(closing != NULL);
 	luaL_openlibs(closing);
 	bridge_stats close_stats = {

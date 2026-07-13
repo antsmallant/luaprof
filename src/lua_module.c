@@ -8,6 +8,13 @@
 #include <lauxlib.h>
 #include <lua.h>
 
+#if defined(LUAPROF_EXPECT_LUA_VERSION)
+_Static_assert(LUA_VERSION_NUM == LUAPROF_EXPECT_LUA_VERSION,
+	"luaprof module built against an unexpected Lua ABI");
+#endif
+_Static_assert(LUA_PROFILE_ABI_VERSION == 1,
+	"luaprof module built against an unexpected profiler bridge ABI");
+
 #define LP_RUNTIME_METATABLE "luaprof.runtime"
 #define LP_RECORDER_METATABLE "luaprof.recorder"
 #define LP_RESULT_METATABLE "luaprof.result"

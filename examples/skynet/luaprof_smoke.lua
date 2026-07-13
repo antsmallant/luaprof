@@ -1,8 +1,18 @@
 local skynet = require "skynet"
 local profile = require "luaprof"
+local sharetable = require "skynet.sharetable"
 require "skynet.manager"
 
 skynet.start(function()
+	assert(_VERSION == "Lua 5.5")
+	sharetable.loadtable("luaprof_s11", {
+		message = "embedded-lua",
+		nested = { 17, 23 },
+	})
+	local shared = assert(sharetable.query("luaprof_s11"))
+	assert(shared.message == "embedded-lua")
+	assert(shared.nested[1] == 17 and shared.nested[2] == 23)
+
 	local cpu_recorder = assert(profile.cpu.start { sample_hz = 1000 })
 	local memory_recorder = assert(profile.memory.start {
 		sample_bytes = 64 * 1024,

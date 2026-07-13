@@ -19,6 +19,13 @@ local bridge_allocations = {}
 for i = 1, 100 do
     bridge_allocations[i] = { value = i }
 end
+local function force_stack_realloc(depth)
+    if depth == 0 then
+        return 0
+    end
+    return 1 + force_stack_realloc(depth - 1)
+end
+assert(force_stack_realloc(200) == 200)
 
 local memory_result = assert(memory:stop())
 local memory_stats = memory_result:stats()
