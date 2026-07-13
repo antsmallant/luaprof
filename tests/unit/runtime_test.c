@@ -87,6 +87,7 @@ main(void) {
 
 	lp_collector_config cpu = cpu_config();
 	lp_collector_config memory = memory_config(true);
+	memory.value.memory.sample_bytes = 1;
 	uint64_t cpu_generation = 0;
 	uint64_t memory_generation = 0;
 	lp_collector_config invalid_memory = memory;
@@ -133,12 +134,38 @@ main(void) {
 	lp_runtime_cpu_quality(runtime, cpu_generation, 4, 1, 2);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		NULL, &host, 0, 64, true);
+	uint64_t weighted_space = 0;
+	uint64_t weighted_objects = 0;
+	assert(lp_runtime_memory_sample_candidate(runtime, memory_generation,
+		NULL, &host, 64, true, &weighted_space, &weighted_objects));
+	assert(weighted_space == 64);
+	assert(weighted_objects == 1);
+	lp_runtime_memory_sample(runtime, memory_generation, frames, 2, false,
+		64, weighted_space, weighted_objects);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		&host, &host, 64, 128, true);
+	assert(lp_runtime_memory_sample_candidate(runtime, memory_generation,
+		&host, &host, 128, true, &weighted_space, &weighted_objects));
+	lp_runtime_memory_sample(runtime, memory_generation, frames, 2, false,
+		128, weighted_space, weighted_objects);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		&host, NULL, 128, 0, true);
+	assert(!lp_runtime_memory_sample_candidate(runtime, memory_generation,
+		&host, NULL, 0, true, &weighted_space, &weighted_objects));
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		&host, NULL, 128, 256, false);
+	assert(!lp_runtime_memory_sample_candidate(runtime, memory_generation,
+		&host, NULL, 256, false, &weighted_space, &weighted_objects));
+	lp_runtime_allocation(runtime, memory_generation, state_identity,
+		&host, state_identity, 128, 256, true);
+	assert(lp_runtime_memory_sample_candidate(runtime, memory_generation,
+		&host, state_identity, 256, true, &weighted_space,
+		&weighted_objects));
+	lp_runtime_memory_sample(runtime, memory_generation, frames, 2, false,
+		256, weighted_space, weighted_objects);
+	assert(!lp_runtime_memory_sample_candidate(runtime,
+		memory_generation + 1, NULL, &host, 64, true, &weighted_space,
+		&weighted_objects));
 
 	lp_result_meta result;
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
@@ -148,9 +175,34 @@ main(void) {
 	assert(result.kind == LP_COLLECTOR_MEMORY);
 	assert(result.config.value.memory.track_free);
 	assert(result.stats.allocations == 1);
-	assert(result.stats.reallocations == 1);
+	assert(result.stats.reallocations == 2);
 	assert(result.stats.frees == 1);
 	assert(result.stats.allocation_failures == 1);
+	assert(result.stats.memory_samples == 3);
+	assert(result.stats.sampled_alloc_bytes == 448);
+	assert(result.stats.alloc_space == 448);
+	assert(result.stats.alloc_objects == 3);
+	assert(lp_result_memory_sample_count(&result) == 1);
+	lp_memory_sample_view memory_sample;
+	assert(lp_result_memory_sample(&result, 0, &memory_sample));
+	assert(memory_sample.alloc_space == 448);
+	assert(memory_sample.alloc_objects == 3);
+	assert(memory_sample.sampled_bytes == 448);
+	assert(memory_sample.sample_count == 3);
+	assert(memory_sample.depth == 2);
+	lp_memory_frame_view memory_frame;
+	assert(lp_result_memory_frame(&result, 0, 0, &memory_frame));
+	assert(memory_frame.kind == LP_FRAME_LUA);
+	assert(memory_frame.currentline == 12);
+	assert(memory_frame.source_length ==
+		sizeof("@runtime_test.lua") - 1);
+	assert(memcmp(memory_frame.source, "@runtime_test.lua",
+		memory_frame.source_length) == 0);
+	assert(lp_result_memory_frame(&result, 0, 1, &memory_frame));
+	assert(memory_frame.kind == LP_FRAME_C);
+	assert(memory_frame.cfunction == sampled_cfunction);
+	assert(lp_result_cpu_sample_count(&result) == 0);
+	lp_result_meta_dispose(&result);
 	assert(!host.callback_active[LP_COLLECTOR_MEMORY]);
 	assert(host.callback_active[LP_COLLECTOR_CPU]);
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_CPU,
@@ -195,6 +247,7 @@ main(void) {
 	assert(host.callback_active[LP_COLLECTOR_MEMORY]);
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
 		memory_generation, &result) == LP_OK);
+	lp_result_meta_dispose(&result);
 
 	host.fail_next_start = true;
 	assert(lp_runtime_start(runtime, state_identity, &cpu,

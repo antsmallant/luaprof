@@ -62,6 +62,10 @@ typedef struct lp_result_stats {
 	uint64_t reallocations;
 	uint64_t frees;
 	uint64_t allocation_failures;
+	uint64_t memory_samples;
+	uint64_t sampled_alloc_bytes;
+	uint64_t alloc_space;
+	uint64_t alloc_objects;
 	uint64_t samples;
 	uint64_t sample_weight;
 	uint64_t sample_host;
@@ -100,7 +104,7 @@ typedef struct lp_cpu_sample_view {
 	size_t depth;
 } lp_cpu_sample_view;
 
-typedef struct lp_cpu_frame_view {
+typedef struct lp_frame_view {
 	lp_frame_kind kind;
 	const void *function;
 	lp_lua_cfunction cfunction;
@@ -108,7 +112,18 @@ typedef struct lp_cpu_frame_view {
 	size_t source_length;
 	int linedefined;
 	int currentline;
-} lp_cpu_frame_view;
+} lp_frame_view;
+
+typedef lp_frame_view lp_cpu_frame_view;
+typedef lp_frame_view lp_memory_frame_view;
+
+typedef struct lp_memory_sample_view {
+	uint64_t alloc_space;
+	uint64_t alloc_objects;
+	uint64_t sampled_bytes;
+	uint64_t sample_count;
+	size_t depth;
+} lp_memory_sample_view;
 
 typedef struct lp_result_meta {
 	lp_collector_kind kind;
@@ -151,6 +166,14 @@ void lp_runtime_state_change(lp_runtime *runtime, uint64_t generation,
 void lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 	lua_State *current_state, void *old_pointer, void *new_pointer,
 	size_t old_size, size_t new_size, bool success);
+bool lp_runtime_memory_sample_candidate(lp_runtime *runtime,
+	uint64_t generation, void *old_pointer, void *new_pointer,
+	size_t new_size, bool success, uint64_t *weighted_space,
+	uint64_t *weighted_objects);
+void lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
+	const lp_stack_frame *frames, size_t depth, bool truncated,
+	size_t allocation_size, uint64_t weighted_space,
+	uint64_t weighted_objects);
 void lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
 	lp_vm_state state, lp_lua_cfunction cfunction,
 	const lp_stack_frame *frames, size_t depth, bool truncated,
@@ -166,6 +189,11 @@ bool lp_result_cpu_sample(const lp_result_meta *result, size_t index,
 	lp_cpu_sample_view *sample);
 bool lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
 	size_t frame_index, lp_cpu_frame_view *frame);
+size_t lp_result_memory_sample_count(const lp_result_meta *result);
+bool lp_result_memory_sample(const lp_result_meta *result, size_t index,
+	lp_memory_sample_view *sample);
+bool lp_result_memory_frame(const lp_result_meta *result,
+	size_t sample_index, size_t frame_index, lp_memory_frame_view *frame);
 
 bool lp_runtime_active(const lp_runtime *runtime, lp_collector_kind kind);
 uint64_t lp_runtime_generation(const lp_runtime *runtime,

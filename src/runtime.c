@@ -1,6 +1,8 @@
 #include "luaprof/runtime.h"
 #include "cpu_core.h"
+#include "memory_core.h"
 
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -10,12 +12,16 @@ typedef struct lp_collector_slot {
 	lp_collector_config config;
 	lp_result_stats stats;
 	lp_cpu_profile *cpu_profile;
+	lp_memory_profile *memory_profile;
 } lp_collector_slot;
 
 struct lp_profile_model {
 	uint64_t next_symbol_id;
 	uint64_t next_stack_id;
 };
+
+static _Atomic uint64_t memory_seed_counter =
+	UINT64_C(0x243f6a8885a308d3);
 
 struct lp_runtime {
 	lua_State *main_state;
@@ -67,7 +73,9 @@ lp_runtime_delete(lp_runtime *runtime) {
 				runtime->main_state, (lp_collector_kind)i, slot->generation);
 		}
 		lp_cpu_profile_delete(slot->cpu_profile);
+		lp_memory_profile_delete(slot->memory_profile);
 		slot->cpu_profile = NULL;
+		slot->memory_profile = NULL;
 		slot->active = false;
 	}
 	free(runtime);
@@ -112,6 +120,17 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 			return LP_ERR_NOMEM;
 		}
 	}
+	else {
+		uint64_t seed = atomic_fetch_add_explicit(&memory_seed_counter,
+			UINT64_C(0x9e3779b97f4a7c15), memory_order_relaxed);
+		seed ^= (uint64_t)(uintptr_t)runtime ^ next;
+		slot->memory_profile = lp_memory_profile_new(
+			config->value.memory.sample_bytes, seed);
+		if (slot->memory_profile == NULL) {
+			memset(slot, 0, sizeof(*slot));
+			return LP_ERR_NOMEM;
+		}
+	}
 
 	if (runtime->host_ops.start_collector != NULL) {
 		lp_status status = runtime->host_ops.start_collector(
@@ -120,6 +139,7 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 			next, config);
 		if (status != LP_OK) {
 			lp_cpu_profile_delete(slot->cpu_profile);
+			lp_memory_profile_delete(slot->memory_profile);
 			memset(slot, 0, sizeof(*slot));
 			return status == LP_ERR_NOMEM ? status : LP_ERR_HOST;
 		}
@@ -154,14 +174,21 @@ lp_runtime_stop(lp_runtime *runtime, lua_State *current_state,
 			current_state == NULL ? runtime->main_state : current_state,
 			kind, generation);
 	}
-	lp_cpu_profile_merge_stats(slot->cpu_profile, &slot->stats);
+	if (kind == LP_COLLECTOR_CPU) {
+		lp_cpu_profile_merge_stats(slot->cpu_profile, &slot->stats);
+	}
+	else {
+		lp_memory_profile_merge_stats(slot->memory_profile, &slot->stats);
+	}
 	memset(result, 0, sizeof(*result));
 	result->kind = kind;
 	result->generation = generation;
 	result->config = slot->config;
 	result->stats = slot->stats;
-	result->private_data = slot->cpu_profile;
+	result->private_data = kind == LP_COLLECTOR_CPU
+		? (void *)slot->cpu_profile : (void *)slot->memory_profile;
 	slot->cpu_profile = NULL;
+	slot->memory_profile = NULL;
 	slot->active = false;
 	memset(slot, 0, sizeof(*slot));
 	return LP_OK;
@@ -253,6 +280,40 @@ lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 	*counter = saturating_add(*counter, 1);
 }
 
+bool
+lp_runtime_memory_sample_candidate(lp_runtime *runtime,
+	uint64_t generation, void *old_pointer, void *new_pointer,
+	size_t new_size, bool success, uint64_t *weighted_space,
+	uint64_t *weighted_objects) {
+	(void)old_pointer;
+	if (runtime == NULL || !success || new_pointer == NULL ||
+		new_size == 0) {
+		return false;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_MEMORY];
+	if (!slot->active || slot->generation != generation) {
+		return false;
+	}
+	return lp_memory_profile_should_sample(slot->memory_profile, new_size,
+		weighted_space, weighted_objects);
+}
+
+void
+lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
+	const lp_stack_frame *frames, size_t depth, bool truncated,
+	size_t allocation_size, uint64_t weighted_space,
+	uint64_t weighted_objects) {
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_MEMORY];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
+	lp_memory_profile_record(slot->memory_profile, frames, depth, truncated,
+		allocation_size, weighted_space, weighted_objects);
+}
+
 void
 lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
 	lp_vm_state state, lp_lua_cfunction cfunction,
@@ -305,7 +366,12 @@ lp_result_meta_dispose(lp_result_meta *result) {
 	if (result == NULL) {
 		return;
 	}
-	lp_cpu_profile_delete(result->private_data);
+	if (result->kind == LP_COLLECTOR_CPU) {
+		lp_cpu_profile_delete(result->private_data);
+	}
+	else if (result->kind == LP_COLLECTOR_MEMORY) {
+		lp_memory_profile_delete(result->private_data);
+	}
 	result->private_data = NULL;
 }
 
@@ -329,6 +395,29 @@ lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
 	size_t frame_index, lp_cpu_frame_view *frame) {
 	return result != NULL && result->kind == LP_COLLECTOR_CPU &&
 		lp_cpu_profile_frame(result->private_data, sample_index,
+			frame_index, frame);
+}
+
+size_t
+lp_result_memory_sample_count(const lp_result_meta *result) {
+	if (result == NULL || result->kind != LP_COLLECTOR_MEMORY) {
+		return 0;
+	}
+	return lp_memory_profile_sample_count(result->private_data);
+}
+
+bool
+lp_result_memory_sample(const lp_result_meta *result, size_t index,
+	lp_memory_sample_view *sample) {
+	return result != NULL && result->kind == LP_COLLECTOR_MEMORY &&
+		lp_memory_profile_sample(result->private_data, index, sample);
+}
+
+bool
+lp_result_memory_frame(const lp_result_meta *result,
+	size_t sample_index, size_t frame_index, lp_memory_frame_view *frame) {
+	return result != NULL && result->kind == LP_COLLECTOR_MEMORY &&
+		lp_memory_profile_frame(result->private_data, sample_index,
 			frame_index, frame);
 }
 

@@ -17,6 +17,25 @@ _Static_assert(LUA_PROFILE_FRAME_C == LP_FRAME_C,
 
 #define LP_CAPTURE_STACK_DEPTH 64u
 
+static size_t
+capture_stack(lua_State *state, lp_stack_frame *frames, bool *truncated) {
+	lua_ProfileFrame captured[LP_CAPTURE_STACK_DEPTH];
+	int was_truncated = 0;
+	size_t depth = lua_profile_capturestack(state, captured,
+		LP_CAPTURE_STACK_DEPTH, &was_truncated);
+	for (size_t i = 0; i < depth; ++i) {
+		frames[i].kind = (lp_frame_kind)captured[i].kind;
+		frames[i].function = captured[i].function;
+		frames[i].cfunction = captured[i].cfunction;
+		frames[i].source = captured[i].source;
+		frames[i].source_length = captured[i].source_length;
+		frames[i].linedefined = captured[i].linedefined;
+		frames[i].currentline = captured[i].currentline;
+	}
+	*truncated = was_truncated != 0;
+	return depth;
+}
+
 static bool
 scheduler_active(const lp_lua_bridge *bridge) {
 	return bridge->scheduler_api != NULL && bridge->scheduler_token != 0;
@@ -36,25 +55,14 @@ record_thread_quality(lp_lua_bridge *bridge) {
 static void
 record_event(lp_lua_bridge *bridge, lua_State *state, lp_vm_state vm_state,
 	lp_lua_cfunction cfunction, unsigned int weight) {
-	lua_ProfileFrame captured[LP_CAPTURE_STACK_DEPTH];
 	lp_stack_frame frames[LP_CAPTURE_STACK_DEPTH];
-	int truncated = 0;
+	bool truncated = false;
 	size_t depth = 0;
 	if (vm_state != LP_VM_HOST) {
-		depth = lua_profile_capturestack(state, captured,
-			LP_CAPTURE_STACK_DEPTH, &truncated);
-	}
-	for (size_t i = 0; i < depth; ++i) {
-		frames[i].kind = (lp_frame_kind)captured[i].kind;
-		frames[i].function = captured[i].function;
-		frames[i].cfunction = captured[i].cfunction;
-		frames[i].source = captured[i].source;
-		frames[i].source_length = captured[i].source_length;
-		frames[i].linedefined = captured[i].linedefined;
-		frames[i].currentline = captured[i].currentline;
+		depth = capture_stack(state, frames, &truncated);
 	}
 	lp_runtime_cpu_sample(bridge->runtime, bridge->cpu_generation, vm_state,
-		cfunction, frames, depth, truncated != 0, weight);
+		cfunction, frames, depth, truncated, weight);
 }
 
 static void
@@ -162,6 +170,19 @@ allocation(void *userdata, lua_State *L,
 	lp_runtime_allocation(bridge->runtime, bridge->memory_generation, L,
 		event->old_pointer, event->new_pointer, event->old_size,
 		event->new_size, event->success != 0);
+	uint64_t weighted_space = 0;
+	uint64_t weighted_objects = 0;
+	if (lp_runtime_memory_sample_candidate(bridge->runtime,
+		bridge->memory_generation, event->old_pointer,
+		event->new_pointer, event->new_size, event->success != 0,
+		&weighted_space, &weighted_objects)) {
+		lp_stack_frame frames[LP_CAPTURE_STACK_DEPTH];
+		bool truncated = false;
+		size_t depth = capture_stack(L, frames, &truncated);
+		lp_runtime_memory_sample(bridge->runtime,
+			bridge->memory_generation, frames, depth, truncated,
+			event->new_size, weighted_space, weighted_objects);
+	}
 }
 
 static void

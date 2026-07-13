@@ -315,6 +315,25 @@ result_stats(lua_State *L) {
 		lua_pushinteger(L,
 			(lua_Integer)result->meta.stats.allocation_failures);
 		lua_setfield(L, -2, "allocation_failures");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.memory_samples);
+		lua_setfield(L, -2, "samples");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.sampled_alloc_bytes);
+		lua_setfield(L, -2, "sampled_alloc_bytes");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.alloc_space);
+		lua_setfield(L, -2, "alloc_space");
+		lua_pushinteger(L, (lua_Integer)result->meta.stats.alloc_objects);
+		lua_setfield(L, -2, "alloc_objects");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.stack_truncations);
+		lua_setfield(L, -2, "stack_truncations");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.aggregate_overflows);
+		lua_setfield(L, -2, "aggregate_overflows");
+		lua_pushinteger(L,
+			(lua_Integer)result->meta.stats.symbol_overflows);
+		lua_setfield(L, -2, "symbol_overflows");
 	}
 	return 1;
 }

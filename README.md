@@ -5,7 +5,8 @@ Skynet is a supported host integration, not a core dependency.
 
 The profiler implementation is under development. Linux thread-per-VM hosts and
 Skynet services can collect CPU samples through thread CPU-time timers. The
-Skynet backend tracks the target VM across worker dispatches.
+Skynet backend tracks the target VM across worker dispatches. Memory recorders
+collect requested alloc-space with allocation-proportional sampling.
 
 ## Build the default host
 
@@ -61,5 +62,16 @@ they currently must use the same `sample_hz`.
 
 CPU results currently expose aggregate and quality counters through the C API,
 with lifecycle and scheduler quality metadata available through Lua
-`result:stats()`. Memory sampling and pprof export are implemented in later
-milestones.
+`result:stats()`.
+
+Memory sampling uses geometrically distributed byte intervals whose mean is
+`sample_bytes`. A successful allocation or realloc consumes its full requested
+new size; frees and failed reallocs do not consume the sampling budget. Each
+event produces at most one sample. Samples are probability-weighted to estimate
+`alloc_space` and `alloc_objects`, while `sampled_alloc_bytes` and `samples`
+report raw observations. Setting `sample_bytes = 1` records every successful
+allocation and realloc.
+
+The current memory result is alloc-space only. `track_free = true` is accepted
+by the V1 API, but sampled live-pointer tracking and in-use metrics are not yet
+implemented. pprof export is also a later milestone.
