@@ -214,6 +214,54 @@ test_gc_samples(void) {
 	vm_close(&vm);
 }
 
+static void
+test_known_hotspot_ratio(void) {
+	test_vm vm;
+	vm_open(&vm);
+	uint64_t generation = start_cpu(&vm, 1000);
+	run_chunk(vm.L,
+		"local function hot()\n"
+		"  local value = 0\n"
+		"  for i = 1, 4000000 do value = value + i end\n"
+		"end\n"
+		"local function cold()\n"
+		"  local value = 0\n"
+		"  for i = 1, 1000000 do value = value + i end\n"
+		"end\n"
+		"for round = 1, 8 do hot(); cold() end\n",
+		"@cpu_ratio_workload.lua");
+	lp_result_meta result = stop_cpu(&vm, generation);
+	uint64_t hot = 0;
+	uint64_t cold = 0;
+	for (size_t i = 0; i < lp_result_cpu_sample_count(&result); ++i) {
+		lp_cpu_sample_view sample;
+		assert(lp_result_cpu_sample(&result, i, &sample));
+		for (size_t j = 0; j < sample.depth; ++j) {
+			lp_cpu_frame_view frame;
+			assert(lp_result_cpu_frame(&result, i, j, &frame));
+			if (frame.kind != LP_FRAME_LUA || frame.source == NULL ||
+				frame.source_length != sizeof("@cpu_ratio_workload.lua") - 1 ||
+				memcmp(frame.source, "@cpu_ratio_workload.lua",
+					frame.source_length) != 0) {
+				continue;
+			}
+			if (frame.linedefined == 1) {
+				hot += sample.weight;
+			}
+			else if (frame.linedefined == 5) {
+				cold += sample.weight;
+			}
+			break;
+		}
+	}
+	assert(hot >= 20);
+	assert(cold >= 5);
+	double ratio = (double)hot / (double)cold;
+	assert(ratio > 2.5 && ratio < 6.0);
+	lp_result_meta_dispose(&result);
+	vm_close(&vm);
+}
+
 static void *
 thread_worker(void *argument) {
 	uint64_t *samples = argument;
@@ -295,6 +343,7 @@ main(void) {
 	test_cfunction_samples();
 	test_host_and_sleep();
 	test_gc_samples();
+	test_known_hotspot_ratio();
 	test_multiple_threads();
 	test_repeated_stop();
 	test_one_vm_per_thread();

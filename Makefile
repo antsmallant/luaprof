@@ -28,9 +28,11 @@ LUA_MODULE := $(BUILD_DIR)/luaprof.so
 RUNTIME_TEST := $(BUILD_DIR)/runtime-test
 DISABLED_BENCH := $(BUILD_DIR)/disabled-runtime-bench
 MEMORY_TRACKING_BENCH := $(BUILD_DIR)/memory-tracking-bench
+COMBINED_SAMPLING_BENCH := $(BUILD_DIR)/combined-sampling-bench
 VM_SAFE_POINT_BENCH := $(BUILD_DIR)/vm-safe-point-bench
 VM_BRIDGE_TEST := $(BUILD_DIR)/vm-bridge-test
 CPU_SAMPLING_TEST := $(BUILD_DIR)/cpu-sampling-test
+COMBINED_SAMPLING_TEST := $(BUILD_DIR)/combined-sampling-test
 SCHEDULER_SAMPLING_TEST := $(BUILD_DIR)/scheduler-sampling-test
 CPU_CORE_TEST := $(BUILD_DIR)/cpu-core-test
 MEMORY_CORE_TEST := $(BUILD_DIR)/memory-core-test
@@ -45,7 +47,7 @@ LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-disabled bench-memory bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-combined bench-disabled bench-memory bench-vm lua module skynet submodule-lua submodule-skynet test test-api test-combined-sampling test-cpu-core test-cpu-sampling test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -131,6 +133,11 @@ $(MEMORY_TRACKING_BENCH): tests/bench/memory_tracking.c $(RUNTIME_OBJECT) $(CPU_
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(INCLUDE_DIR) $(LDFLAGS) $^ $(LDLIBS) -lm -o $@
 
+$(COMBINED_SAMPLING_BENCH): tests/bench/combined_sampling.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
+		-lm -ldl -pthread -lrt -o $@
+
 $(VM_SAFE_POINT_BENCH): tests/bench/vm_safe_point.c $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(LUA_SRC) $(LDFLAGS) $< $(LUA_LIB) $(LDLIBS) -lm -ldl -o $@
@@ -140,6 +147,11 @@ $(VM_BRIDGE_TEST): tests/integration/vm_bridge_test.c $(LUA_LIB) | $(BUILD_DIR)
 		-I$(LUA_SRC) $(LDFLAGS) $< $(LUA_LIB) $(LDLIBS) -lm -ldl -o $@
 
 $(CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
+		-lm -ldl -pthread -lrt -o $@
+
+$(COMBINED_SAMPLING_TEST): tests/integration/combined_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
 		-lm -ldl -pthread -lrt -o $@
@@ -160,7 +172,7 @@ thread-vm: $(BUILD_DIR)/thread-vm-smoke
 
 module: $(LUA_MODULE)
 
-test: test-thread-vm test-runtime test-cpu-core test-memory-core test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-scheduler-sampling
+test: test-thread-vm test-runtime test-cpu-core test-memory-core test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
 test-thread-vm: thread-vm
 	./tests/integration/thread_vm.sh
@@ -186,6 +198,9 @@ test-vm-bridge: $(VM_BRIDGE_TEST)
 test-cpu-sampling: $(CPU_SAMPLING_TEST)
 	$(CPU_SAMPLING_TEST)
 
+test-combined-sampling: $(COMBINED_SAMPLING_TEST)
+	$(COMBINED_SAMPLING_TEST)
+
 test-memory-sampling: $(MEMORY_SAMPLING_TEST)
 	$(MEMORY_SAMPLING_TEST)
 
@@ -194,6 +209,9 @@ test-scheduler-sampling: $(SCHEDULER_SAMPLING_TEST)
 
 bench-disabled: $(DISABLED_BENCH)
 	$(DISABLED_BENCH)
+
+bench-combined: $(COMBINED_SAMPLING_BENCH)
+	$(COMBINED_SAMPLING_BENCH)
 
 bench-memory: $(MEMORY_TRACKING_BENCH)
 	$(MEMORY_TRACKING_BENCH)
