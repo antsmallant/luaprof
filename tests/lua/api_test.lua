@@ -85,8 +85,23 @@ abandoned = nil
 collectgarbage "collect"
 assert(profile.cpu.start():stop())
 
-local unwritten, write_error = cpu_result:write("unused.pb.gz")
+local cpu_path = "/tmp/luaprof-api-cpu.pb.gz"
+local memory_path = "/tmp/luaprof-api-memory.pb.gz"
+local folded_path = "/tmp/luaprof-api-memory.folded"
+assert(cpu_result:write(cpu_path))
+assert(memory_result:write(memory_path, { sample = "alloc_space" }))
+assert(memory_result:write(folded_path, {
+    format = "folded",
+    sample = "inuse_space",
+}))
+local unwritten, write_error = memory_result:write(folded_path, {
+    format = "folded",
+    sample = "cpu",
+})
 assert(unwritten == nil)
-assert(write_error:match "not implemented")
+assert(write_error:match "not available")
+assert(os.remove(cpu_path))
+assert(os.remove(memory_path))
+assert(os.remove(folded_path))
 
 print("luaprof Lua API lifecycle: ok")

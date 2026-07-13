@@ -11,7 +11,8 @@ collect requested alloc-space with allocation-proportional sampling.
 ## Build the default host
 
 The default build initializes only the required Lua submodule and builds a
-minimal thread-per-VM program:
+minimal thread-per-VM program. A C11 toolchain, POSIX threads and zlib development
+files are required:
 
 ```sh
 make
@@ -82,4 +83,43 @@ lifetime, peak and object-timeline profiling are intentionally not collected.
 
 The live map is preallocated for 16384 sampled blocks. Additional sampled live
 blocks still contribute alloc-space but not in-use values, and are reported by
-`live_map_overflows`. pprof export is a later milestone.
+`live_map_overflows`.
+
+## Export results
+
+`result:write()` writes a gzip-compressed `profile.proto` file by default:
+
+```lua
+assert(cpu_result:write("cpu.pb.gz"))
+assert(memory_result:write("heap.pb.gz", {
+    sample = "alloc_space",
+}))
+```
+
+CPU profiles contain `samples/count` and `cpu/nanoseconds`. Memory profiles
+contain `alloc_objects/count`, `alloc_space/bytes`, `inuse_objects/count` and
+`inuse_space/bytes`. `sample` selects the default metric; it defaults to `cpu`,
+`alloc_space` when free tracking is disabled, and `inuse_space` when enabled.
+Lua frames are named from source and definition line. Native C symbol lookup is
+not required: C frames are emitted as `lua_CFunction@0x...`.
+
+The files can be read by Google pprof, for example:
+
+```sh
+go tool pprof -top cpu.pb.gz
+go tool pprof -sample_index=alloc_space -top heap.pb.gz
+go tool pprof -sample_index=inuse_space -svg heap.pb.gz > heap.svg
+go tool pprof -http=:0 heap.pb.gz
+```
+
+SVG output requires Graphviz (`dot`); the interactive web view may also invoke
+Graphviz for graph reports.
+
+Folded stacks are available for flame graph tooling:
+
+```lua
+assert(memory_result:write("heap.folded", {
+    format = "folded",
+    sample = "inuse_space",
+}))
+```

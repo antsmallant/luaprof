@@ -1,5 +1,6 @@
 #include "luaprof/runtime.h"
 #include "lua_bridge.h"
+#include "pprof_exporter.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -77,7 +78,8 @@ check_no_unknown_options(lua_State *L, int index, const char *first,
 	const char *second) {
 	lua_pushnil(L);
 	while (lua_next(L, index) != 0) {
-		const char *key = lua_tostring(L, -2);
+		const char *key = lua_type(L, -2) == LUA_TSTRING
+			? lua_tostring(L, -2) : NULL;
 		bool known = key != NULL &&
 			((first != NULL && strcmp(key, first) == 0) ||
 				(second != NULL && strcmp(key, second) == 0));
@@ -347,11 +349,43 @@ result_stats(lua_State *L) {
 
 static int
 result_write(lua_State *L) {
-	(void)luaL_checkudata(L, 1, LP_RESULT_METATABLE);
-	(void)luaL_checkstring(L, 2);
-	lua_pushnil(L);
-	lua_pushliteral(L, "luaprof pprof exporter is not implemented yet");
-	return 2;
+	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
+	const char *path = luaL_checkstring(L, 2);
+	lp_export_format format = LP_EXPORT_PPROF;
+	const char *sample_type = NULL;
+	if (!lua_isnoneornil(L, 3)) {
+		luaL_checktype(L, 3, LUA_TTABLE);
+		check_no_unknown_options(L, 3, "format", "sample");
+		lua_getfield(L, 3, "format");
+		if (!lua_isnil(L, -1)) {
+			const char *name = luaL_checkstring(L, -1);
+			if (strcmp(name, "pprof") == 0) {
+				format = LP_EXPORT_PPROF;
+			}
+			else if (strcmp(name, "folded") == 0) {
+				format = LP_EXPORT_FOLDED;
+			}
+			else {
+				return luaL_argerror(L, 3,
+					"format must be 'pprof' or 'folded'");
+			}
+		}
+		lua_pop(L, 1);
+		lua_getfield(L, 3, "sample");
+		if (!lua_isnil(L, -1)) {
+			sample_type = luaL_checkstring(L, -1);
+		}
+		lua_pop(L, 1);
+	}
+	char error[256];
+	if (!lp_export_result(&result->meta, path, format, sample_type, error,
+		sizeof(error))) {
+		lua_pushnil(L);
+		lua_pushstring(L, error);
+		return 2;
+	}
+	lua_pushboolean(L, true);
+	return 1;
 }
 
 static int
