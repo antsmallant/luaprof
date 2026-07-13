@@ -22,7 +22,7 @@ integration through the pinned fork in `integration/skynet`.
 ## Quick start
 
 ```sh
-git clone --recurse-submodules git@github.com:antsmallant/luaprof.git
+git clone git@github.com:antsmallant/luaprof.git
 cd luaprof
 make
 make test
@@ -45,9 +45,9 @@ go tool pprof -sample_index=alloc_space -top build/thread-vm-heap.pb.gz
 go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 ```
 
-`make` initializes only the required Lua submodule. A clone without
-`--recurse-submodules` therefore also works. `make test` runs the core,
-thread-per-VM and exporter tests; Skynet is tested separately.
+`make` initializes only the required Lua submodule. `make test` runs the core,
+thread-per-VM and exporter tests; Skynet and its direct submodule are initialized
+only by the explicit Skynet targets.
 
 ## Lua API
 
@@ -256,4 +256,5 @@ git commit -m "build: update Lua submodule"
 ```
 
 Use the same sequence for `integration/skynet`. A fresh checkout should use
-`git submodule update --init --recursive` to restore the exact pinned commits.
+`git submodule update --init 3rd/lua-5.4.8 integration/skynet` to restore the
+exact pinned commits without downloading unused nested dependencies.
