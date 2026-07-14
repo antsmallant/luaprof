@@ -39,7 +39,7 @@ typedef struct lp_skynet_target {
 	_Atomic uint64_t profiler_overhead;
 	_Atomic uint64_t stale;
 	_Atomic uint64_t worker_mask;
-	_Atomic bool collecting;
+	_Atomic bool draining_events;
 } lp_skynet_target;
 
 typedef struct lp_skynet_worker {
@@ -165,7 +165,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		errno = saved_errno;
 		return;
 	}
-	if (atomic_load_explicit(&target->collecting, memory_order_acquire)) {
+	if (atomic_load_explicit(&target->draining_events, memory_order_acquire)) {
 		add_quality(&target->profiler_overhead, weight);
 		errno = saved_errno;
 		return;
@@ -570,7 +570,7 @@ api_target_start(uint32_t handle, lua_State *main_state,
 	atomic_store_explicit(&selected->stale, 0, memory_order_relaxed);
 	atomic_store_explicit(&selected->worker_mask, 0,
 		memory_order_relaxed);
-	atomic_store_explicit(&selected->collecting, false,
+	atomic_store_explicit(&selected->draining_events, false,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->state, LP_SKYNET_TARGET_ACTIVE,
 		memory_order_release);
@@ -674,7 +674,7 @@ api_target_release(uint64_t token) {
 }
 
 static void
-api_publish(uint64_t token, lua_State *state, int vm_state,
+api_publish_state(uint64_t token, lua_State *state, int vm_state,
 	lp_skynet_lua_cfunction cfunction) {
 	lp_skynet_target *target = find_token(token, false);
 	if (target == NULL || current_worker == NULL ||
@@ -685,19 +685,19 @@ api_publish(uint64_t token, lua_State *state, int vm_state,
 }
 
 static void
-api_begin_collection(uint64_t token) {
+api_begin_event_drain(uint64_t token) {
 	lp_skynet_target *target = find_token(token, true);
 	if (target != NULL) {
-		atomic_store_explicit(&target->collecting, true,
+		atomic_store_explicit(&target->draining_events, true,
 			memory_order_release);
 	}
 }
 
 static void
-api_end_collection(uint64_t token) {
+api_end_event_drain(uint64_t token) {
 	lp_skynet_target *target = find_token(token, true);
 	if (target != NULL) {
-		atomic_store_explicit(&target->collecting, false,
+		atomic_store_explicit(&target->draining_events, false,
 			memory_order_release);
 	}
 }
@@ -751,9 +751,9 @@ lp_skynet_host_get_api(uint32_t abi_version) {
 		.target_start = api_target_start,
 		.target_quiesce = api_target_quiesce,
 		.target_release = api_target_release,
-		.publish = api_publish,
-		.begin_collection = api_begin_collection,
-		.end_collection = api_end_collection,
+		.publish_state = api_publish_state,
+		.begin_event_drain = api_begin_event_drain,
+		.end_event_drain = api_end_event_drain,
 		.next_event = api_next_event,
 		.take_quality = api_take_quality,
 	};

@@ -418,7 +418,7 @@ read_text(const char *path) {
 	return text;
 }
 
-static lp_result_meta
+static lp_result
 cpu_result(void) {
 	lp_runtime *runtime = lp_runtime_new(NULL, NULL, NULL);
 	assert(runtime != NULL);
@@ -444,7 +444,7 @@ cpu_result(void) {
 		&frame, 1, false, 1);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_GC, NULL, &frame, 1,
 		false, 2);
-	lp_result_meta result;
+	lp_result result;
 	assert(lp_runtime_stop(runtime, NULL, LP_COLLECTOR_CPU, generation,
 		&result) == LP_OK);
 	lp_runtime_delete(runtime);
@@ -464,7 +464,7 @@ record_allocation(lp_runtime *runtime, uint64_t generation, void *pointer,
 		size, space, objects);
 }
 
-static lp_result_meta
+static lp_result
 memory_result(void) {
 	lp_runtime *runtime = lp_runtime_new(NULL, NULL, NULL);
 	assert(runtime != NULL);
@@ -493,7 +493,7 @@ memory_result(void) {
 	record_allocation(runtime, generation, second, 128, &frame);
 	lp_runtime_allocation(runtime, generation, NULL, second, NULL, 128, 0,
 		true);
-	lp_result_meta result;
+	lp_result result;
 	assert(lp_runtime_stop(runtime, NULL, LP_COLLECTOR_MEMORY, generation,
 		&result) == LP_OK);
 	lp_runtime_delete(runtime);
@@ -515,7 +515,7 @@ main(void) {
 	assert(!lp_native_symbol_resolve((const void *)(uintptr_t)1, &native));
 	assert(!lp_native_symbol_resolve(NULL, NULL));
 
-	lp_result_meta cpu = cpu_result();
+	lp_result cpu = cpu_result();
 	assert(lp_export_result(&cpu, cpu_path, LP_EXPORT_PPROF, NULL, error,
 		sizeof(error)));
 	lp_export_symbols symbols = {
@@ -538,9 +538,9 @@ main(void) {
 		"visible.profiled [profiled_cfunction]") != NULL);
 	assert(strstr(folded, "lua_CFunction@0x1") != NULL);
 	free(folded);
-	lp_result_meta_dispose(&cpu);
+	lp_result_dispose(&cpu);
 
-	lp_result_meta memory = memory_result();
+	lp_result memory = memory_result();
 	assert(lp_export_result(&memory, memory_path, LP_EXPORT_PPROF, NULL,
 		error, sizeof(error)));
 	assert(lp_export_result(&memory, memory_folded, LP_EXPORT_FOLDED,
@@ -557,7 +557,7 @@ main(void) {
 	assert(strstr(folded, "memory_work") != NULL);
 	assert(strstr(folded, " 192\n") != NULL);
 	free(folded);
-	lp_result_meta_dispose(&memory);
+	lp_result_dispose(&memory);
 
 	if (getenv("LP_KEEP_PPROF_FILES") == NULL) {
 		assert(remove(cpu_path) == 0);

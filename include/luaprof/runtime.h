@@ -8,7 +8,6 @@
 typedef struct lua_State lua_State;
 typedef int (*lp_lua_cfunction)(lua_State *L);
 typedef struct lp_runtime lp_runtime;
-typedef struct lp_profile_model lp_profile_model;
 
 typedef enum lp_collector_kind {
 	LP_COLLECTOR_CPU = 0,
@@ -134,13 +133,13 @@ typedef struct lp_memory_sample_view {
 	size_t depth;
 } lp_memory_sample_view;
 
-typedef struct lp_result_meta {
+typedef struct lp_result {
 	lp_collector_kind kind;
 	uint64_t generation;
 	lp_collector_config config;
 	lp_result_stats stats;
 	void *private_data;
-} lp_result_meta;
+} lp_result;
 
 /*
  * start_collector publishes a collector to the host. stop_collector must
@@ -165,7 +164,7 @@ void lp_runtime_delete(lp_runtime *runtime);
 lp_status lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 	const lp_collector_config *config, uint64_t *generation);
 lp_status lp_runtime_stop(lp_runtime *runtime, lua_State *current_state,
-	lp_collector_kind kind, uint64_t generation, lp_result_meta *result);
+	lp_collector_kind kind, uint64_t generation, lp_result *result);
 
 void lp_runtime_safe_point(lp_runtime *runtime, uint64_t generation,
 	lua_State *current_state, unsigned int pending);
@@ -192,23 +191,22 @@ void lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
 void lp_runtime_cpu_scheduler_quality(lp_runtime *runtime,
 	uint64_t generation, uint64_t stale, uint64_t workers);
 
-void lp_result_meta_dispose(lp_result_meta *result);
-size_t lp_result_cpu_sample_count(const lp_result_meta *result);
-bool lp_result_cpu_sample(const lp_result_meta *result, size_t index,
+void lp_result_dispose(lp_result *result);
+size_t lp_result_cpu_sample_count(const lp_result *result);
+bool lp_result_cpu_sample(const lp_result *result, size_t index,
 	lp_cpu_sample_view *sample);
-bool lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
+bool lp_result_cpu_frame(const lp_result *result, size_t sample_index,
 	size_t frame_index, lp_cpu_frame_view *frame);
-size_t lp_result_memory_sample_count(const lp_result_meta *result);
-bool lp_result_memory_sample(const lp_result_meta *result, size_t index,
+size_t lp_result_memory_sample_count(const lp_result *result);
+bool lp_result_memory_sample(const lp_result *result, size_t index,
 	lp_memory_sample_view *sample);
-bool lp_result_memory_frame(const lp_result_meta *result,
+bool lp_result_memory_frame(const lp_result *result,
 	size_t sample_index, size_t frame_index, lp_memory_frame_view *frame);
 
 bool lp_runtime_active(const lp_runtime *runtime, lp_collector_kind kind);
 uint64_t lp_runtime_generation(const lp_runtime *runtime,
 	lp_collector_kind kind);
 lua_State *lp_runtime_main_state(const lp_runtime *runtime);
-lp_profile_model *lp_runtime_model(lp_runtime *runtime);
 const char *lp_status_string(lp_status status);
 
 #endif

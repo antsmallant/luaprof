@@ -39,7 +39,7 @@ typedef struct lp_lua_recorder {
 } lp_lua_recorder;
 
 typedef struct lp_lua_result {
-	lp_result_meta meta;
+	lp_result value;
 } lp_lua_result;
 
 static const char runtime_registry_key;
@@ -210,7 +210,7 @@ recorder_stop(lua_State *L) {
 	lp_lua_result *result = lua_newuserdatauv(L, sizeof(*result), 0);
 	memset(result, 0, sizeof(*result));
 	lp_status status = lp_runtime_stop(recorder->runtime, L, recorder->kind,
-		recorder->generation, &result->meta);
+		recorder->generation, &result->value);
 	if (status != LP_OK) {
 		lua_pop(L, 1);
 		lua_pushnil(L);
@@ -228,10 +228,10 @@ recorder_gc(lua_State *L) {
 	lp_lua_recorder *recorder = luaL_checkudata(L, 1,
 		LP_RECORDER_METATABLE);
 	if (recorder->active) {
-		lp_result_meta ignored = { 0 };
+		lp_result ignored = { 0 };
 		(void)lp_runtime_stop(recorder->runtime, L, recorder->kind,
 			recorder->generation, &ignored);
-		lp_result_meta_dispose(&ignored);
+		lp_result_dispose(&ignored);
 		recorder->active = false;
 	}
 	return 0;
@@ -240,7 +240,7 @@ recorder_gc(lua_State *L) {
 static int
 result_gc(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
-	lp_result_meta_dispose(&result->meta);
+	lp_result_dispose(&result->value);
 	return 0;
 }
 
@@ -258,102 +258,102 @@ static int
 result_stats(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	lua_createtable(L, 0, 7);
-	lua_pushstring(L, kind_name(result->meta.kind));
+	lua_pushstring(L, kind_name(result->value.kind));
 	lua_setfield(L, -2, "kind");
-	lua_pushinteger(L, (lua_Integer)result->meta.generation);
+	lua_pushinteger(L, (lua_Integer)result->value.generation);
 	lua_setfield(L, -2, "generation");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.sample_weight);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.sample_weight);
 	lua_setfield(L, -2, "samples");
 	lua_pushboolean(L, false);
 	lua_setfield(L, -2, "active");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.safe_points);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.safe_points);
 	lua_setfield(L, -2, "safe_points");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.pending_weight);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.pending_weight);
 	lua_setfield(L, -2, "pending_weight");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_host);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.state_host);
 	lua_setfield(L, -2, "state_host");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_lua);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.state_lua);
 	lua_setfield(L, -2, "state_lua");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_c);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.state_c);
 	lua_setfield(L, -2, "state_c");
-	lua_pushinteger(L, (lua_Integer)result->meta.stats.state_gc);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.state_gc);
 	lua_setfield(L, -2, "state_gc");
-	if (result->meta.kind == LP_COLLECTOR_CPU) {
+	if (result->value.kind == LP_COLLECTOR_CPU) {
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.config.value.cpu.sample_hz);
+			(lua_Integer)result->value.config.value.cpu.sample_hz);
 		lua_setfield(L, -2, "sample_hz");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.sample_host);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.sample_host);
 		lua_setfield(L, -2, "sample_host");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.sample_lua);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.sample_lua);
 		lua_setfield(L, -2, "sample_lua");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.sample_c);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.sample_c);
 		lua_setfield(L, -2, "sample_c");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.sample_gc);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.sample_gc);
 		lua_setfield(L, -2, "sample_gc");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.dropped_events);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.dropped_events);
 		lua_setfield(L, -2, "dropped_events");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.unstable_events);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.unstable_events);
 		lua_setfield(L, -2, "unstable_events");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.profiler_overhead_events);
+			(lua_Integer)result->value.stats.profiler_overhead_events);
 		lua_setfield(L, -2, "profiler_overhead_events");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.stale_events);
+			(lua_Integer)result->value.stats.stale_events);
 		lua_setfield(L, -2, "stale_events");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.scheduler_workers);
+			(lua_Integer)result->value.stats.scheduler_workers);
 		lua_setfield(L, -2, "scheduler_workers");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.stack_truncations);
+			(lua_Integer)result->value.stats.stack_truncations);
 		lua_setfield(L, -2, "stack_truncations");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.aggregate_overflows);
+			(lua_Integer)result->value.stats.aggregate_overflows);
 		lua_setfield(L, -2, "aggregate_overflows");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.symbol_overflows);
+			(lua_Integer)result->value.stats.symbol_overflows);
 		lua_setfield(L, -2, "symbol_overflows");
 	}
-	if (result->meta.kind == LP_COLLECTOR_MEMORY) {
+	if (result->value.kind == LP_COLLECTOR_MEMORY) {
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.config.value.memory.sample_bytes);
+			(lua_Integer)result->value.config.value.memory.sample_bytes);
 		lua_setfield(L, -2, "sample_bytes");
 		lua_pushboolean(L,
-			result->meta.config.value.memory.track_free);
+			result->value.config.value.memory.track_free);
 		lua_setfield(L, -2, "track_free");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.allocations);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.allocations);
 		lua_setfield(L, -2, "allocation_events");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.reallocations);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.reallocations);
 		lua_setfield(L, -2, "reallocation_events");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.frees);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.frees);
 		lua_setfield(L, -2, "free_events");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.allocation_failures);
+			(lua_Integer)result->value.stats.allocation_failures);
 		lua_setfield(L, -2, "allocation_failures");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.memory_samples);
+			(lua_Integer)result->value.stats.memory_samples);
 		lua_setfield(L, -2, "samples");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.sampled_alloc_bytes);
+			(lua_Integer)result->value.stats.sampled_alloc_bytes);
 		lua_setfield(L, -2, "sampled_alloc_bytes");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.alloc_space);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.alloc_space);
 		lua_setfield(L, -2, "alloc_space");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.alloc_objects);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.alloc_objects);
 		lua_setfield(L, -2, "alloc_objects");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.inuse_space);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.inuse_space);
 		lua_setfield(L, -2, "inuse_space");
-		lua_pushinteger(L, (lua_Integer)result->meta.stats.inuse_objects);
+		lua_pushinteger(L, (lua_Integer)result->value.stats.inuse_objects);
 		lua_setfield(L, -2, "inuse_objects");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.live_map_overflows);
+			(lua_Integer)result->value.stats.live_map_overflows);
 		lua_setfield(L, -2, "live_map_overflows");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.stack_truncations);
+			(lua_Integer)result->value.stats.stack_truncations);
 		lua_setfield(L, -2, "stack_truncations");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.aggregate_overflows);
+			(lua_Integer)result->value.stats.aggregate_overflows);
 		lua_setfield(L, -2, "aggregate_overflows");
 		lua_pushinteger(L,
-			(lua_Integer)result->meta.stats.symbol_overflows);
+			(lua_Integer)result->value.stats.symbol_overflows);
 		lua_setfield(L, -2, "symbol_overflows");
 	}
 	return 1;
@@ -395,7 +395,7 @@ result_write(lua_State *L) {
 		.userdata = lua_symbols,
 		.cfunction_name = lp_lua_symbols_lookup,
 	};
-	bool success = lp_export_result_with_symbols(&result->meta, path, format,
+	bool success = lp_export_result_with_symbols(&result->value, path, format,
 		sample_type, lua_symbols == NULL ? NULL : &symbols, error,
 		sizeof(error));
 	lp_lua_symbols_delete(lua_symbols);
@@ -412,7 +412,7 @@ static int
 result_tostring(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	lua_pushfstring(L, "luaprof.%s.result(generation=%I)",
-		kind_name(result->meta.kind), (lua_Integer)result->meta.generation);
+		kind_name(result->value.kind), (lua_Integer)result->value.generation);
 	return 1;
 }
 

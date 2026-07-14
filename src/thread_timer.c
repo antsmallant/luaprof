@@ -37,7 +37,7 @@ struct lp_thread_timer {
 	_Atomic(lp_lua_cfunction) slot_cfunction;
 	_Atomic int slot_vm_state;
 	_Atomic bool active;
-	_Atomic bool collecting;
+	_Atomic bool draining_events;
 	bool timer_created;
 	bool signal_acquired;
 	int signal_slot;
@@ -93,7 +93,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	}
 
 	unsigned int weight = event_weight(info);
-	if (atomic_load_explicit(&timer->collecting, memory_order_acquire)) {
+	if (atomic_load_explicit(&timer->draining_events, memory_order_acquire)) {
 		add_quality(&timer->profiler_overhead, weight);
 		errno = saved_errno;
 		return;
@@ -237,7 +237,7 @@ lp_thread_timer_delete(lp_thread_timer *timer) {
 }
 
 void
-lp_thread_timer_publish(lp_thread_timer *timer, lua_State *state,
+lp_thread_timer_publish_state(lp_thread_timer *timer, lua_State *state,
 	lp_vm_state vm_state, lp_lua_cfunction cfunction) {
 	if (timer == NULL) {
 		return;
@@ -374,17 +374,17 @@ lp_thread_timer_next(lp_thread_timer *timer, lp_tick_event *event) {
 }
 
 void
-lp_thread_timer_begin_collection(lp_thread_timer *timer) {
+lp_thread_timer_begin_event_drain(lp_thread_timer *timer) {
 	if (timer != NULL) {
-		atomic_store_explicit(&timer->collecting, true,
+		atomic_store_explicit(&timer->draining_events, true,
 			memory_order_release);
 	}
 }
 
 void
-lp_thread_timer_end_collection(lp_thread_timer *timer) {
+lp_thread_timer_end_event_drain(lp_thread_timer *timer) {
 	if (timer != NULL) {
-		atomic_store_explicit(&timer->collecting, false,
+		atomic_store_explicit(&timer->draining_events, false,
 			memory_order_release);
 	}
 }

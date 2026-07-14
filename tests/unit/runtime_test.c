@@ -78,8 +78,6 @@ main(void) {
 	lp_runtime *runtime = lp_runtime_new(state_identity, &ops, &host);
 	assert(runtime != NULL);
 	assert(lp_runtime_main_state(runtime) == state_identity);
-	lp_profile_model *shared_model = lp_runtime_model(runtime);
-	assert(shared_model != NULL);
 	assert(!lp_runtime_active(runtime, LP_COLLECTOR_CPU));
 	assert(!lp_runtime_active(runtime, LP_COLLECTOR_MEMORY));
 	assert(host.starts[LP_COLLECTOR_CPU] == 0);
@@ -167,7 +165,7 @@ main(void) {
 		memory_generation + 1, NULL, &host, 64, true, &weighted_space,
 		&weighted_objects));
 
-	lp_result_meta result;
+	lp_result result;
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
 		memory_generation + 1, &result) == LP_ERR_STALE);
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
@@ -207,7 +205,7 @@ main(void) {
 	assert(memory_frame.kind == LP_FRAME_C);
 	assert(memory_frame.cfunction == sampled_cfunction);
 	assert(lp_result_cpu_sample_count(&result) == 0);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	assert(!host.callback_active[LP_COLLECTOR_MEMORY]);
 	assert(host.callback_active[LP_COLLECTOR_CPU]);
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_CPU,
@@ -238,21 +236,19 @@ main(void) {
 	assert(lp_result_cpu_frame(&result, 0, 1, &frame));
 	assert(frame.kind == LP_FRAME_C);
 	assert(frame.cfunction == sampled_cfunction);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	assert(!host.callback_active[LP_COLLECTOR_CPU]);
-	assert(lp_runtime_model(runtime) == shared_model);
-
 	assert(lp_runtime_start(runtime, state_identity, &cpu,
 		&cpu_generation) == LP_OK);
 	assert(lp_runtime_start(runtime, state_identity, &memory,
 		&memory_generation) == LP_OK);
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_CPU,
 		cpu_generation, &result) == LP_OK);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	assert(host.callback_active[LP_COLLECTOR_MEMORY]);
 	assert(lp_runtime_stop(runtime, state_identity, LP_COLLECTOR_MEMORY,
 		memory_generation, &result) == LP_OK);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 
 	host.fail_next_start = true;
 	assert(lp_runtime_start(runtime, state_identity, &cpu,

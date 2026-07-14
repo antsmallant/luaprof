@@ -614,7 +614,7 @@ append_export_sample(lp_export_model *model, const lp_frame_desc *frames,
 }
 
 static bool
-build_cpu_samples(lp_export_model *model, const lp_result_meta *result) {
+build_cpu_samples(lp_export_model *model, const lp_result *result) {
 	uint64_t period = UINT64_C(1000000000) /
 		result->config.value.cpu.sample_hz;
 	for (size_t i = 0; i < lp_result_cpu_sample_count(result); ++i) {
@@ -675,7 +675,7 @@ build_cpu_samples(lp_export_model *model, const lp_result_meta *result) {
 }
 
 static bool
-build_memory_samples(lp_export_model *model, const lp_result_meta *result) {
+build_memory_samples(lp_export_model *model, const lp_result *result) {
 	for (size_t i = 0; i < lp_result_memory_sample_count(result); ++i) {
 		lp_memory_sample_view sample;
 		if (!lp_result_memory_sample(result, i, &sample)) {
@@ -729,7 +729,7 @@ select_metric(lp_export_model *model, const char *requested) {
 }
 
 static bool
-model_init(lp_export_model *model, const lp_result_meta *result,
+model_init(lp_export_model *model, const lp_result *result,
 	const char *sample_type, const lp_export_symbols *symbols) {
 	memset(model, 0, sizeof(*model));
 	model->symbols = symbols;
@@ -1043,7 +1043,7 @@ write_folded(const char *path, const lp_export_model *model, char *error,
 }
 
 bool
-lp_export_result_with_symbols(const lp_result_meta *result, const char *path,
+lp_export_result_with_symbols(const lp_result *result, const char *path,
 	lp_export_format format, const char *sample_type,
 	const lp_export_symbols *symbols, char *error, size_t error_capacity) {
 	if (error != NULL && error_capacity != 0) {
@@ -1083,7 +1083,7 @@ lp_export_result_with_symbols(const lp_result_meta *result, const char *path,
 }
 
 bool
-lp_export_result(const lp_result_meta *result, const char *path,
+lp_export_result(const lp_result *result, const char *path,
 	lp_export_format format, const char *sample_type, char *error,
 	size_t error_capacity) {
 	return lp_export_result_with_symbols(result, path, format, sample_type,

@@ -75,16 +75,16 @@ start_memory(test_vm *vm) {
 	return generation;
 }
 
-static lp_result_meta
+static lp_result
 stop(test_vm *vm, lp_collector_kind kind, uint64_t generation) {
-	lp_result_meta result;
+	lp_result result;
 	assert(lp_runtime_stop(vm->runtime, vm->L, kind, generation, &result)
 		== LP_OK);
 	return result;
 }
 
 static bool
-cpu_has_source(const lp_result_meta *result, const char *source) {
+cpu_has_source(const lp_result *result, const char *source) {
 	size_t length = strlen(source);
 	for (size_t i = 0; i < lp_result_cpu_sample_count(result); ++i) {
 		lp_cpu_sample_view sample;
@@ -102,7 +102,7 @@ cpu_has_source(const lp_result_meta *result, const char *source) {
 }
 
 static bool
-memory_has_source(const lp_result_meta *result, const char *source) {
+memory_has_source(const lp_result *result, const char *source) {
 	size_t length = strlen(source);
 	for (size_t i = 0; i < lp_result_memory_sample_count(result); ++i) {
 		lp_memory_sample_view sample;
@@ -134,18 +134,18 @@ test_memory_stops_first(void) {
 	uint64_t cpu = start_cpu(&vm);
 	uint64_t memory = start_memory(&vm);
 	run_chunk(vm.L, combined_workload, "@combined_before_memory_stop.lua");
-	lp_result_meta memory_result = stop(&vm, LP_COLLECTOR_MEMORY, memory);
+	lp_result memory_result = stop(&vm, LP_COLLECTOR_MEMORY, memory);
 	assert(memory_result.stats.memory_samples != 0);
 	assert(memory_result.stats.inuse_space != 0);
 	run_chunk(vm.L,
 		"local total = 0\n"
 		"for i = 1, 20000000 do total = total + i end\n",
 		"@combined_after_memory_stop.lua");
-	lp_result_meta cpu_result = stop(&vm, LP_COLLECTOR_CPU, cpu);
+	lp_result cpu_result = stop(&vm, LP_COLLECTOR_CPU, cpu);
 	assert(cpu_result.stats.sample_lua >= 20);
 	assert(cpu_has_source(&cpu_result, "@combined_after_memory_stop.lua"));
-	lp_result_meta_dispose(&memory_result);
-	lp_result_meta_dispose(&cpu_result);
+	lp_result_dispose(&memory_result);
+	lp_result_dispose(&cpu_result);
 	close_vm(&vm);
 }
 
@@ -156,18 +156,18 @@ test_cpu_stops_first(void) {
 	uint64_t cpu = start_cpu(&vm);
 	uint64_t memory = start_memory(&vm);
 	run_chunk(vm.L, combined_workload, "@combined_before_cpu_stop.lua");
-	lp_result_meta cpu_result = stop(&vm, LP_COLLECTOR_CPU, cpu);
+	lp_result cpu_result = stop(&vm, LP_COLLECTOR_CPU, cpu);
 	assert(cpu_result.stats.sample_lua != 0);
 	run_chunk(vm.L,
 		"local keep = {}\n"
 		"for i = 1, 30000 do keep[i] = string.rep('m', i % 100 + 1) end\n"
 		"_G.combined_keep = keep\n",
 		"@combined_after_cpu_stop.lua");
-	lp_result_meta memory_result = stop(&vm, LP_COLLECTOR_MEMORY, memory);
+	lp_result memory_result = stop(&vm, LP_COLLECTOR_MEMORY, memory);
 	assert(memory_result.stats.memory_samples != 0);
 	assert(memory_has_source(&memory_result, "@combined_after_cpu_stop.lua"));
-	lp_result_meta_dispose(&cpu_result);
-	lp_result_meta_dispose(&memory_result);
+	lp_result_dispose(&cpu_result);
+	lp_result_dispose(&memory_result);
 	close_vm(&vm);
 }
 
@@ -182,8 +182,8 @@ test_repeated_combined_lifecycle(void) {
 			"local values = {}\n"
 			"for i = 1, 200 do values[i] = { i, tostring(i) } end\n",
 			"@combined_lifecycle.lua");
-		lp_result_meta first;
-		lp_result_meta second;
+		lp_result first;
+		lp_result second;
 		if ((cycle & 1u) == 0) {
 			first = stop(&vm, LP_COLLECTOR_CPU, cpu);
 			second = stop(&vm, LP_COLLECTOR_MEMORY, memory);
@@ -192,8 +192,8 @@ test_repeated_combined_lifecycle(void) {
 			first = stop(&vm, LP_COLLECTOR_MEMORY, memory);
 			second = stop(&vm, LP_COLLECTOR_CPU, cpu);
 		}
-		lp_result_meta_dispose(&first);
-		lp_result_meta_dispose(&second);
+		lp_result_dispose(&first);
+		lp_result_dispose(&second);
 		assert(!lp_runtime_active(vm.runtime, LP_COLLECTOR_CPU));
 		assert(!lp_runtime_active(vm.runtime, LP_COLLECTOR_MEMORY));
 	}

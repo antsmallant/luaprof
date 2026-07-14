@@ -31,10 +31,10 @@ typedef struct lp_skynet_host_api {
 		uint64_t generation, uint32_t sample_hz, uint64_t *token);
 	int (*target_quiesce)(uint64_t token);
 	void (*target_release)(uint64_t token);
-	void (*publish)(uint64_t token, lua_State *state, int vm_state,
+	void (*publish_state)(uint64_t token, lua_State *state, int vm_state,
 		lp_skynet_lua_cfunction cfunction);
-	void (*begin_collection)(uint64_t token);
-	void (*end_collection)(uint64_t token);
+	void (*begin_event_drain)(uint64_t token);
+	void (*end_event_drain)(uint64_t token);
 	bool (*next_event)(uint64_t token, lp_skynet_tick_event *event);
 	void (*take_quality)(uint64_t token, lp_skynet_quality *quality);
 } lp_skynet_host_api;

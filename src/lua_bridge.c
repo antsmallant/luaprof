@@ -55,7 +55,7 @@ record_thread_quality(lp_lua_bridge *bridge) {
 }
 
 static void
-record_event(lp_lua_bridge *bridge, lua_State *state, lp_vm_state vm_state,
+record_cpu_event(lp_lua_bridge *bridge, lua_State *state, lp_vm_state vm_state,
 	lp_lua_cfunction cfunction, unsigned int weight) {
 	lp_stack_frame frames[LP_CAPTURE_STACK_DEPTH];
 	bool truncated = false;
@@ -71,7 +71,7 @@ static void
 drain_thread_timer(lp_lua_bridge *bridge) {
 	lp_tick_event event;
 	while (lp_thread_timer_next(bridge->cpu_timer, &event)) {
-		record_event(bridge, event.state, event.vm_state, event.cfunction,
+		record_cpu_event(bridge, event.state, event.vm_state, event.cfunction,
 			event.weight);
 	}
 	record_thread_quality(bridge);
@@ -92,7 +92,7 @@ drain_scheduler(lp_lua_bridge *bridge) {
 	lp_skynet_tick_event event;
 	while (bridge->scheduler_api->next_event(bridge->scheduler_token,
 		&event)) {
-		record_event(bridge, event.state, (lp_vm_state)event.vm_state,
+		record_cpu_event(bridge, event.state, (lp_vm_state)event.vm_state,
 			(lp_lua_cfunction)event.cfunction, event.weight);
 	}
 	lp_skynet_quality quality;
@@ -105,22 +105,22 @@ drain_scheduler(lp_lua_bridge *bridge) {
 }
 
 static void
-begin_collection(lp_lua_bridge *bridge) {
+begin_event_drain(lp_lua_bridge *bridge) {
 	if (scheduler_active(bridge)) {
-		bridge->scheduler_api->begin_collection(bridge->scheduler_token);
+		bridge->scheduler_api->begin_event_drain(bridge->scheduler_token);
 	}
 	else {
-		lp_thread_timer_begin_collection(bridge->cpu_timer);
+		lp_thread_timer_begin_event_drain(bridge->cpu_timer);
 	}
 }
 
 static void
-end_collection(lp_lua_bridge *bridge) {
+end_event_drain(lp_lua_bridge *bridge) {
 	if (scheduler_active(bridge)) {
-		bridge->scheduler_api->end_collection(bridge->scheduler_token);
+		bridge->scheduler_api->end_event_drain(bridge->scheduler_token);
 	}
 	else {
-		lp_thread_timer_end_collection(bridge->cpu_timer);
+		lp_thread_timer_end_event_drain(bridge->cpu_timer);
 	}
 }
 
@@ -137,11 +137,11 @@ drain_cpu(lp_lua_bridge *bridge) {
 static void
 safe_point(void *userdata, lua_State *L, unsigned int pending) {
 	lp_lua_bridge *bridge = userdata;
-	begin_collection(bridge);
+	begin_event_drain(bridge);
 	lp_runtime_safe_point(bridge->runtime, bridge->cpu_generation, L,
 		pending);
 	drain_cpu(bridge);
-	end_collection(bridge);
+	end_event_drain(bridge);
 }
 
 static void
@@ -149,19 +149,19 @@ state_change(void *userdata, lua_State *L, int state,
 	lua_CFunction cfunction) {
 	lp_lua_bridge *bridge = userdata;
 	if (scheduler_active(bridge)) {
-		bridge->scheduler_api->publish(bridge->scheduler_token, L, state,
+		bridge->scheduler_api->publish_state(bridge->scheduler_token, L, state,
 			(lp_skynet_lua_cfunction)cfunction);
 	}
 	else {
-		lp_thread_timer_publish(bridge->cpu_timer, L, (lp_vm_state)state,
+		lp_thread_timer_publish_state(bridge->cpu_timer, L, (lp_vm_state)state,
 			cfunction);
 	}
 	lp_runtime_state_change(bridge->runtime, bridge->cpu_generation, L,
 		(lp_vm_state)state, cfunction);
 	if (state == LP_VM_HOST && scheduler_active(bridge)) {
-		begin_collection(bridge);
+		begin_event_drain(bridge);
 		drain_cpu(bridge);
-		end_collection(bridge);
+		end_event_drain(bridge);
 	}
 }
 
@@ -258,11 +258,11 @@ stop_collector(void *userdata, lp_runtime *runtime,
 	(void)runtime;
 	if (kind == LP_COLLECTOR_CPU && bridge->cpu_generation == generation) {
 		if (scheduler_active(bridge)) {
-			begin_collection(bridge);
+			begin_event_drain(bridge);
 			(void)bridge->scheduler_api->target_quiesce(
 				bridge->scheduler_token);
 			drain_cpu(bridge);
-			end_collection(bridge);
+			end_event_drain(bridge);
 		}
 		else {
 			lp_thread_timer_disarm(bridge->cpu_timer);

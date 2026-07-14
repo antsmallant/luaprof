@@ -64,12 +64,12 @@ run_case(const char *name, int active, bool track_free) {
 	clock_gettime(CLOCK_MONOTONIC, &end);
 
 	if (active) {
-		lp_result_meta result;
+		lp_result result;
 		assert(lp_runtime_stop(runtime, NULL, LP_COLLECTOR_MEMORY, generation,
 			&result) == LP_OK);
 		assert(result.stats.inuse_space == 0);
 		assert(result.stats.inuse_objects == 0);
-		lp_result_meta_dispose(&result);
+		lp_result_dispose(&result);
 	}
 	lp_runtime_delete(runtime);
 	uint64_t elapsed = nanoseconds(end) - nanoseconds(begin);

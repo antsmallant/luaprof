@@ -24,7 +24,7 @@ typedef struct scheduler_test {
 	lp_lua_bridge bridge;
 	lp_runtime *runtime;
 	uint64_t generation;
-	lp_result_meta result;
+	lp_result result;
 } scheduler_test;
 
 typedef struct concurrent_test {
@@ -67,7 +67,7 @@ open_test(scheduler_test *test) {
 
 static void
 close_test(scheduler_test *test) {
-	lp_result_meta_dispose(&test->result);
+	lp_result_dispose(&test->result);
 	if (test->runtime != NULL) {
 		lp_runtime_delete(test->runtime);
 	}
@@ -75,7 +75,7 @@ close_test(scheduler_test *test) {
 }
 
 static int
-result_has_source(const lp_result_meta *result, const char *source) {
+result_has_source(const lp_result *result, const char *source) {
 	size_t source_length = strlen(source);
 	for (size_t i = 0; i < lp_result_cpu_sample_count(result); ++i) {
 		lp_cpu_sample_view sample;

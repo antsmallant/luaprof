@@ -15,11 +15,6 @@ typedef struct lp_collector_slot {
 	lp_memory_profile *memory_profile;
 } lp_collector_slot;
 
-struct lp_profile_model {
-	uint64_t next_symbol_id;
-	uint64_t next_stack_id;
-};
-
 static _Atomic uint64_t memory_seed_counter =
 	UINT64_C(0x243f6a8885a308d3);
 
@@ -29,7 +24,6 @@ struct lp_runtime {
 	void *host_userdata;
 	uint64_t next_generation;
 	bool closing;
-	lp_profile_model model;
 	lp_collector_slot collectors[LP_COLLECTOR_COUNT];
 };
 
@@ -48,8 +42,6 @@ lp_runtime_new(lua_State *main_state, const lp_host_ops *host_ops,
 
 	runtime->main_state = main_state;
 	runtime->host_userdata = host_userdata;
-	runtime->model.next_symbol_id = 1;
-	runtime->model.next_stack_id = 1;
 	if (host_ops != NULL) {
 		runtime->host_ops = *host_ops;
 	}
@@ -152,7 +144,7 @@ lp_runtime_start(lp_runtime *runtime, lua_State *current_state,
 
 lp_status
 lp_runtime_stop(lp_runtime *runtime, lua_State *current_state,
-	lp_collector_kind kind, uint64_t generation, lp_result_meta *result) {
+	lp_collector_kind kind, uint64_t generation, lp_result *result) {
 	if (runtime == NULL || result == NULL || !valid_kind(kind) ||
 		generation == 0) {
 		return LP_ERR_ARGUMENT;
@@ -367,7 +359,7 @@ lp_runtime_cpu_scheduler_quality(lp_runtime *runtime, uint64_t generation,
 }
 
 void
-lp_result_meta_dispose(lp_result_meta *result) {
+lp_result_dispose(lp_result *result) {
 	if (result == NULL) {
 		return;
 	}
@@ -381,7 +373,7 @@ lp_result_meta_dispose(lp_result_meta *result) {
 }
 
 size_t
-lp_result_cpu_sample_count(const lp_result_meta *result) {
+lp_result_cpu_sample_count(const lp_result *result) {
 	if (result == NULL || result->kind != LP_COLLECTOR_CPU) {
 		return 0;
 	}
@@ -389,14 +381,14 @@ lp_result_cpu_sample_count(const lp_result_meta *result) {
 }
 
 bool
-lp_result_cpu_sample(const lp_result_meta *result, size_t index,
+lp_result_cpu_sample(const lp_result *result, size_t index,
 	lp_cpu_sample_view *sample) {
 	return result != NULL && result->kind == LP_COLLECTOR_CPU &&
 		lp_cpu_profile_sample(result->private_data, index, sample);
 }
 
 bool
-lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
+lp_result_cpu_frame(const lp_result *result, size_t sample_index,
 	size_t frame_index, lp_cpu_frame_view *frame) {
 	return result != NULL && result->kind == LP_COLLECTOR_CPU &&
 		lp_cpu_profile_frame(result->private_data, sample_index,
@@ -404,7 +396,7 @@ lp_result_cpu_frame(const lp_result_meta *result, size_t sample_index,
 }
 
 size_t
-lp_result_memory_sample_count(const lp_result_meta *result) {
+lp_result_memory_sample_count(const lp_result *result) {
 	if (result == NULL || result->kind != LP_COLLECTOR_MEMORY) {
 		return 0;
 	}
@@ -412,14 +404,14 @@ lp_result_memory_sample_count(const lp_result_meta *result) {
 }
 
 bool
-lp_result_memory_sample(const lp_result_meta *result, size_t index,
+lp_result_memory_sample(const lp_result *result, size_t index,
 	lp_memory_sample_view *sample) {
 	return result != NULL && result->kind == LP_COLLECTOR_MEMORY &&
 		lp_memory_profile_sample(result->private_data, index, sample);
 }
 
 bool
-lp_result_memory_frame(const lp_result_meta *result,
+lp_result_memory_frame(const lp_result *result,
 	size_t sample_index, size_t frame_index, lp_memory_frame_view *frame) {
 	return result != NULL && result->kind == LP_COLLECTOR_MEMORY &&
 		lp_memory_profile_frame(result->private_data, sample_index,
@@ -443,11 +435,6 @@ lp_runtime_generation(const lp_runtime *runtime, lp_collector_kind kind) {
 lua_State *
 lp_runtime_main_state(const lp_runtime *runtime) {
 	return runtime == NULL ? NULL : runtime->main_state;
-}
-
-lp_profile_model *
-lp_runtime_model(lp_runtime *runtime) {
-	return runtime == NULL ? NULL : &runtime->model;
 }
 
 const char *

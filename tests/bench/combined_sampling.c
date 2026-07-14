@@ -129,9 +129,9 @@ start_memory(benchmark *bench, bool track_free) {
 	return generation;
 }
 
-static lp_result_meta
+static lp_result
 stop(benchmark *bench, lp_collector_kind kind, uint64_t generation) {
-	lp_result_meta result;
+	lp_result result;
 	assert(lp_runtime_stop(bench->runtime, bench->L, kind, generation,
 		&result) == LP_OK);
 	return result;
@@ -156,7 +156,7 @@ run_mode(benchmark *bench, int mode, benchmark_stats *stats) {
 	lua_pop(bench->L, 1);
 	uint64_t elapsed = thread_cpu_ns() - begin;
 	if (cpu_generation != 0) {
-		lp_result_meta result = stop(bench, LP_COLLECTOR_CPU,
+		lp_result result = stop(bench, LP_COLLECTOR_CPU,
 			cpu_generation);
 		stats->cpu_ticks += result.stats.sample_weight;
 		stats->cpu_samples += result.stats.samples;
@@ -169,16 +169,16 @@ run_mode(benchmark *bench, int mode, benchmark_stats *stats) {
 		stats->profiler_overhead += result.stats.profiler_overhead_events;
 		stats->aggregate_overflows += result.stats.aggregate_overflows;
 		stats->symbol_overflows += result.stats.symbol_overflows;
-		lp_result_meta_dispose(&result);
+		lp_result_dispose(&result);
 	}
 	if (memory_generation != 0) {
-		lp_result_meta result = stop(bench, LP_COLLECTOR_MEMORY,
+		lp_result result = stop(bench, LP_COLLECTOR_MEMORY,
 			memory_generation);
 		stats->memory_samples += result.stats.memory_samples;
 		stats->aggregate_overflows += result.stats.aggregate_overflows;
 		stats->symbol_overflows += result.stats.symbol_overflows;
 		stats->live_map_overflows += result.stats.live_map_overflows;
-		lp_result_meta_dispose(&result);
+		lp_result_dispose(&result);
 	}
 	return elapsed;
 }

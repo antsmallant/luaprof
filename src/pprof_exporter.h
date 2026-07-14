@@ -14,10 +14,10 @@ typedef struct lp_export_symbols {
 		lp_lua_cfunction function, size_t *length);
 } lp_export_symbols;
 
-bool lp_export_result(const lp_result_meta *result, const char *path,
+bool lp_export_result(const lp_result *result, const char *path,
 	lp_export_format format, const char *sample_type, char *error,
 	size_t error_capacity);
-bool lp_export_result_with_symbols(const lp_result_meta *result,
+bool lp_export_result_with_symbols(const lp_result *result,
 	const char *path, lp_export_format format, const char *sample_type,
 	const lp_export_symbols *symbols, char *error, size_t error_capacity);
 

@@ -144,16 +144,16 @@ start_memory(test_vm *vm, uint64_t sample_bytes, bool track_free) {
 	return generation;
 }
 
-static lp_result_meta
+static lp_result
 stop_memory(test_vm *vm, uint64_t generation) {
-	lp_result_meta result = { 0 };
+	lp_result result = { 0 };
 	assert(lp_runtime_stop(vm->runtime, vm->L, LP_COLLECTOR_MEMORY,
 		generation, &result) == LP_OK);
 	return result;
 }
 
 static int
-result_has_source(const lp_result_meta *result, const char *source) {
+result_has_source(const lp_result *result, const char *source) {
 	size_t source_length = strlen(source);
 	for (size_t i = 0; i < lp_result_memory_sample_count(result); ++i) {
 		lp_memory_sample_view sample;
@@ -184,7 +184,7 @@ test_exact_mode(void) {
 		"end\n",
 		"@memory_exact.lua");
 	vm.tracker.enabled = false;
-	lp_result_meta result = stop_memory(&vm, generation);
+	lp_result result = stop_memory(&vm, generation);
 	assert(vm.tracker.objects != 0);
 	assert(result.stats.memory_samples == vm.tracker.objects);
 	assert(result.stats.sampled_alloc_bytes == vm.tracker.bytes);
@@ -197,7 +197,7 @@ test_exact_mode(void) {
 	assert(result.stats.reallocations != 0);
 	assert(lp_result_memory_sample_count(&result) != 0);
 	assert(result_has_source(&result, "@memory_exact.lua"));
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	close_vm(&vm);
 }
 
@@ -210,14 +210,14 @@ test_sampled_mode(void) {
 		"local keep = {}\n"
 		"for i = 1, 30000 do keep[i] = string.rep('x', i % 200 + 1) end\n",
 		"@memory_sampled.lua");
-	lp_result_meta result = stop_memory(&vm, generation);
+	lp_result result = stop_memory(&vm, generation);
 	assert(result.stats.memory_samples > 10);
 	assert(result.stats.memory_samples < result.stats.allocations +
 		result.stats.reallocations);
 	assert(result.stats.alloc_space > result.stats.sampled_alloc_bytes);
 	assert(result.stats.alloc_objects > result.stats.memory_samples);
 	assert(result_has_source(&result, "@memory_sampled.lua"));
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	close_vm(&vm);
 }
 
@@ -237,7 +237,7 @@ test_exact_live_mode(void) {
 		"collectgarbage('collect')\n"
 		"_G.memory_live_keep = keep\n",
 		"@memory_live.lua");
-	lp_result_meta result = stop_memory(&vm, generation);
+	lp_result result = stop_memory(&vm, generation);
 	vm.tracker.enabled = false;
 	assert(vm.tracker.live_objects != 0);
 	assert(vm.tracker.live_objects < vm.tracker.objects);
@@ -256,7 +256,7 @@ test_exact_live_mode(void) {
 	assert(aggregate_space == result.stats.inuse_space);
 	assert(aggregate_objects == result.stats.inuse_objects);
 	assert(result_has_source(&result, "@memory_live.lua"));
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	close_vm(&vm);
 }
 

@@ -81,9 +81,9 @@ start_cpu(test_vm *vm, uint32_t sample_hz) {
 	return generation;
 }
 
-static lp_result_meta
+static lp_result
 stop_cpu(test_vm *vm, uint64_t generation) {
-	lp_result_meta result = { 0 };
+	lp_result result = { 0 };
 	assert(lp_runtime_stop(vm->runtime, vm->L, LP_COLLECTOR_CPU,
 		generation, &result) == LP_OK);
 	return result;
@@ -99,7 +99,7 @@ run_chunk(lua_State *L, const char *source, const char *name) {
 }
 
 static int
-result_has_cfunction(const lp_result_meta *result,
+result_has_cfunction(const lp_result *result,
 	lp_lua_cfunction wanted, int require_lua_caller) {
 	size_t count = lp_result_cpu_sample_count(result);
 	for (size_t i = 0; i < count; ++i) {
@@ -134,7 +134,7 @@ test_lua_samples(void) {
 		"for i = 1, 30000000 do value = value + i end\n"
 		"assert(value > 0)\n",
 		"@cpu_lua_workload.lua");
-	lp_result_meta result = stop_cpu(&vm, generation);
+	lp_result result = stop_cpu(&vm, generation);
 	assert(result.stats.sample_lua >= 20);
 	assert(result.stats.sample_weight == result.stats.sample_lua +
 		result.stats.sample_c + result.stats.sample_gc +
@@ -156,7 +156,7 @@ test_lua_samples(void) {
 		}
 	}
 	assert(saw_source);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	vm_close(&vm);
 }
 
@@ -169,10 +169,10 @@ test_cfunction_samples(void) {
 		"busy_cfunction(80000000)\n"
 		"local after = true\n",
 		"@cpu_c_workload.lua");
-	lp_result_meta result = stop_cpu(&vm, generation);
+	lp_result result = stop_cpu(&vm, generation);
 	assert(result.stats.sample_c >= 20);
 	assert(result_has_cfunction(&result, busy_cfunction, 1));
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	vm_close(&vm);
 }
 
@@ -182,16 +182,16 @@ test_host_and_sleep(void) {
 	vm_open(&vm);
 	uint64_t generation = start_cpu(&vm, 500);
 	busy_for(UINT64_C(50000000));
-	lp_result_meta host = stop_cpu(&vm, generation);
+	lp_result host = stop_cpu(&vm, generation);
 	assert(host.stats.sample_host >= 10);
-	lp_result_meta_dispose(&host);
+	lp_result_dispose(&host);
 
 	generation = start_cpu(&vm, 50);
 	struct timespec sleep_time = { .tv_sec = 0, .tv_nsec = 100000000 };
 	assert(nanosleep(&sleep_time, NULL) == 0);
-	lp_result_meta sleep = stop_cpu(&vm, generation);
+	lp_result sleep = stop_cpu(&vm, generation);
 	assert(sleep.stats.sample_weight == 0);
-	lp_result_meta_dispose(&sleep);
+	lp_result_dispose(&sleep);
 	vm_close(&vm);
 }
 
@@ -208,9 +208,9 @@ test_gc_samples(void) {
 		"  collectgarbage('collect')\n"
 		"end\n",
 		"@cpu_gc_workload.lua");
-	lp_result_meta result = stop_cpu(&vm, generation);
+	lp_result result = stop_cpu(&vm, generation);
 	assert(result.stats.sample_gc != 0);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	vm_close(&vm);
 }
 
@@ -230,7 +230,7 @@ test_known_hotspot_ratio(void) {
 		"end\n"
 		"for round = 1, 8 do hot(); cold() end\n",
 		"@cpu_ratio_workload.lua");
-	lp_result_meta result = stop_cpu(&vm, generation);
+	lp_result result = stop_cpu(&vm, generation);
 	uint64_t hot = 0;
 	uint64_t cold = 0;
 	for (size_t i = 0; i < lp_result_cpu_sample_count(&result); ++i) {
@@ -258,7 +258,7 @@ test_known_hotspot_ratio(void) {
 	assert(cold >= 5);
 	double ratio = (double)hot / (double)cold;
 	assert(ratio > 2.5 && ratio < 6.0);
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	vm_close(&vm);
 }
 
@@ -272,9 +272,9 @@ thread_worker(void *argument) {
 		"local value = 0\n"
 		"for i = 1, 20000000 do value = value + i end\n",
 		"@cpu_thread_workload.lua");
-	lp_result_meta result = stop_cpu(&vm, generation);
+	lp_result result = stop_cpu(&vm, generation);
 	*samples = result.stats.sample_lua;
-	lp_result_meta_dispose(&result);
+	lp_result_dispose(&result);
 	vm_close(&vm);
 	return NULL;
 }
@@ -300,8 +300,8 @@ test_repeated_stop(void) {
 	for (unsigned int i = 0; i < 50; ++i) {
 		uint64_t generation = start_cpu(&vm, 10000);
 		busy_for(UINT64_C(300000));
-		lp_result_meta result = stop_cpu(&vm, generation);
-		lp_result_meta_dispose(&result);
+		lp_result result = stop_cpu(&vm, generation);
+		lp_result_dispose(&result);
 	}
 	vm_close(&vm);
 }
@@ -320,8 +320,8 @@ test_one_vm_per_thread(void) {
 	uint64_t second_generation = 0;
 	assert(lp_runtime_start(second.runtime, second.L, &config,
 		&second_generation) == LP_ERR_HOST);
-	lp_result_meta result = stop_cpu(&first, first_generation);
-	lp_result_meta_dispose(&result);
+	lp_result result = stop_cpu(&first, first_generation);
+	lp_result_dispose(&result);
 	vm_close(&second);
 	vm_close(&first);
 }
