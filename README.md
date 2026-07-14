@@ -55,6 +55,10 @@ go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 `make` 只初始化必需的 Lua submodule。`make test` 运行 core、thread-per-VM 和 exporter
 测试；只有显式的 Skynet target 才会初始化 Skynet 及其直接 submodule。
 
+将 `luaprof` 接入已有的 thread-per-VM 或 Skynet 项目时，请阅读
+[项目接入指南](docs/integration.md)。该文档包含 Lua VM bridge 的源码修改清单、构建与
+链接要求、Skynet scheduler hook，以及接入后的验证步骤。
+
 ## Lua API
 
 直接启动各个 recorder，不使用共享的 `profile.start()` mode table：

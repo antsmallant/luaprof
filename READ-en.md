@@ -61,6 +61,11 @@ shown as `main chunk` instead of `profile.lua:0`.
 thread-per-VM and exporter tests; Skynet and its direct submodule are initialized
 only by the explicit Skynet targets.
 
+For integrating `luaprof` into an existing thread-per-VM or Skynet project, see
+the [integration guide](docs/integration-en.md). It covers the Lua VM bridge
+source changes, build and link requirements, Skynet scheduler hooks, and
+post-integration validation.
+
 ## Lua API
 
 Start each recorder directly. There is no shared `profile.start()` mode table:
