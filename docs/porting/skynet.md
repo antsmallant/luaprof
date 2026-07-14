@@ -1,7 +1,6 @@
 # 向 Skynet 移植 luaprof
 
-[English](skynet-en.md) | [接入指南](../integration.md) |
-[Lua 5.4](lua-5.4.md) | [Lua 5.5](lua-5.5.md)
+[接入指南](../integration.md) | [Lua 5.4](lua-5.4.md) | [Lua 5.5](lua-5.5.md)
 
 本文给出 Skynet 内嵌 Lua bridge 和 scheduler hook 的函数级修改位置。正式验证版本是
 项目固定的 Skynet fork。profile 的目标是调用 `profile.cpu.start()` 的 service；它在

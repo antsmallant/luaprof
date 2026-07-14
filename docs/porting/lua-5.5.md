@@ -1,7 +1,6 @@
 # 向 Lua 5.5 移植 VM bridge
 
-[English](lua-5.5-en.md) | [接入指南](../integration.md) |
-[Lua 5.4](lua-5.4.md) | [Skynet](skynet.md)
+[接入指南](../integration.md) | [Lua 5.4](lua-5.4.md) | [Skynet](skynet.md)
 
 本文给出 PUC Lua 5.5 的函数级修改位置。正式验证版本是 Lua 5.5.0。PUC Lua 5.5 与
 Skynet 定制 Lua 都报告 `LUA_VERSION_NUM == 505`，但它们不是同一 VM ABI，module 不能

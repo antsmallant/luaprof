@@ -1,7 +1,6 @@
 # luaprof 维护者指南
 
-[English](maintainer-guide-en.md) | [README](../README.md) |
-[项目接入](integration.md) | [采样模型](profiling-model.md)
+[README](../README.md) | [项目接入](integration.md) | [采样模型](profiling-model.md)
 
 本文面向维护 `luaprof`、Lua fork 和 Skynet fork 的开发者。普通使用者只需要 README
 和项目接入指南。
@@ -221,7 +220,7 @@ sample index，并检查 drop、truncation 和 overflow 计数。
 - README 保持面向首次使用，不放入本机路径和内部工作流。
 - `.gitmodules` 只使用公开 HTTPS fetch URL。
 - 三个 gitlink commit 已经推送到各自 `luaprof` 分支。
-- 中英文 README 和 docs 入口有效。
+- README 和 docs 入口有效。
 - 三个 module 使用正确 Lua ABI，且没有静态包含另一份 Lua。
 - `make test`、`make test-lua55` 和 `make test-skynet` 通过。
 - thread-per-VM 与 Skynet 示例能生成可由标准 `go tool pprof` 读取的结果。

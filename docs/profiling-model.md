@@ -1,7 +1,6 @@
 # 采样模型与结果解读
 
-[English](profiling-model-en.md) | [README](../README.md) |
-[项目接入](integration.md) | [维护者指南](maintainer-guide.md)
+[README](../README.md) | [项目接入](integration.md) | [维护者指南](maintainer-guide.md)
 
 本文说明 `luaprof` 的 Lua API、CPU 和内存采样语义、输出格式、质量指标与固定限制。
 

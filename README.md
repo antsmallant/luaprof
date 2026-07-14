@@ -1,7 +1,5 @@
 # luaprof
 
-[English](READ-en.md)
-
 `luaprof` 是面向 Lua 的 Linux 采样分析器，支持相互独立的 CPU 和内存 recorder，
 并输出标准 pprof profile。当前支持固定 Lua 5.4.8、Lua 5.5.0 fork 的
 thread-per-VM 宿主，以及使用定制 Lua 5.5 的固定 Skynet fork。

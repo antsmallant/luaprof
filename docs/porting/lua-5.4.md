@@ -1,7 +1,6 @@
 # 向 Lua 5.4 移植 VM bridge
 
-[English](lua-5.4-en.md) | [接入指南](../integration.md) |
-[Lua 5.5](lua-5.5.md) | [Skynet](skynet.md)
+[接入指南](../integration.md) | [Lua 5.5](lua-5.5.md) | [Skynet](skynet.md)
 
 本文给出 PUC Lua 5.4 的函数级修改位置。正式验证版本是 Lua 5.4.8；其他 5.4.x 应以
 本文作为移植参考，并重新运行完整 contract test。
