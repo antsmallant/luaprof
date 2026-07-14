@@ -93,15 +93,23 @@ git -C ../skynet remote set-url --push origin \
     git@github.com:antsmallant/skynet.git
 ```
 
+三个公开 `luaprof` 分支都保持同一历史形态：对应 `origin/master` 加一个 luaprof
+提交。Lua fork 的提交 message 为 `feat: luaprof VM bridge`，Skynet 为
+`feat: luaprof integration`。本地开发可以使用临时提交，但发布前必须压回单个提交，不能
+把实现过程中的修复提交逐个留在公开 fork 历史中。
+
 fork 的标准流程：
 
-1. 在独立 checkout 的 `luaprof` 分支修改。
-2. 在该 fork 中运行对应 build/test。
-3. commit 并 push `origin/luaprof`。
-4. 确认远端已经能 fetch 新 commit。
-5. 回到父仓库更新 gitlink。
+1. fetch 远端，确认 `origin/master` 仍是生成 patch 使用的固定 baseline。
+2. 在独立 checkout 的 `luaprof` 分支修改并运行对应 build/test。
+3. 确保最终源码已提交且工作区干净，然后执行 `git reset --soft origin/master`。
+4. 使用约定 message 创建新的单个提交，并确认
+   `git rev-list --count origin/master..luaprof` 输出 `1`。
+5. 执行 `git push --force-with-lease origin luaprof`，确认远端能 fetch 新 commit。
+6. 立即回到父仓库更新 gitlink 并完成回归，避免父仓库继续引用已替换的旧 commit。
 
-先推送 fork、再更新父仓库非常重要；否则父仓库会引用外部无法获取的 commit。
+重写公开分支是有意的发布流程，因此必须使用 `--force-with-lease`，不能使用无保护的
+`--force`。先推送 fork、再更新父仓库非常重要；否则父仓库会引用外部无法获取的 commit。
 
 ## 4. 更新父仓库 gitlink
 
