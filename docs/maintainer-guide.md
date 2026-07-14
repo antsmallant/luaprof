@@ -142,20 +142,14 @@ git status --short
 
 父仓库提交并 push 后，再确认 `HEAD` 与 `origin/master` 一致。
 
-## 5. 修改 Lua bridge
+## 5. 更新 Lua bridge 与 patch
 
-PUC Lua bridge 的完整修改范围见 [Lua 5.4](porting/lua-5.4.md) 和
-[Lua 5.5](porting/lua-5.5.md) 函数级指南。
-bridge 改动通常需要同时更新：
-
-- `lua.h` 中公开 profiler ABI；
-- `lstate.*` 和 `lprofile.*`；
-- `lvm.c`、`ldo.c`、`lgc.c`、`lmem.c`；
-- stack/call-name 所需的 `ldebug.*`；
-- build dependency 和 amalgamated build。
+生成和应用入口见 [Lua 5.4](porting/lua-5.4.md)、[Lua 5.5](porting/lua-5.5.md) 和
+[Skynet](porting/skynet.md)。实现差异以生成 patch 和固定 fork 源码为准，不另外维护
+逐文件或逐函数文字清单。
 
 不要只修改其中一个 PUC Lua fork。若 contract 也适用于 Skynet，必须将等效改动移植到
-Skynet 自带的 `3rd/lua`，并分别运行两套 bridge test。
+Skynet 自带的 `3rd/lua`，并分别运行对应 bridge test。
 
 ### 生成移植 patch
 

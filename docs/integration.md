@@ -66,7 +66,7 @@ Skynet 不能使用父项目的 PUC Lua fork。必须保留 Skynet 自带的 `3r
 
 ### 3.2 移植到项目自己的 Lua
 
-先选择与目标 major/minor 匹配的函数级指南：
+先选择与目标 major/minor 匹配的 patch 指南：
 
 - [Lua 5.4 bridge 移植](porting/lua-5.4.md)
 - [Lua 5.5 bridge 移植](porting/lua-5.5.md)
@@ -84,38 +84,9 @@ Skynet 不能使用父项目的 PUC Lua fork。必须保留 Skynet 自带的 `3r
 `-- .`；后续 fork 提交变化时不需要修改 target hash 或文件清单。目标正好基于相同版本
 时，先用 `git apply --check` 检查再正式 apply。`HEAD` 指本地 submodule 当前检出的
 commit，脚本不会自动 fetch 远端；维护者应先更新 submodule。如果 Lua 已有内部改造，
-应按对应函数逐项移植并审查，不能盲目套用 patch。需要一起移植的文件和职责如下：
-
-| 文件 | 必需改动 |
-| --- | --- |
-| `lua.h` | bridge ABI、hook/event/frame 类型以及四个公开 bridge 函数 |
-| `lstate.h`, `lstate.c` | 在 `global_State`/`lua_State` 保存 hook、pending、状态和 capture guard，并初始化/清理 |
-| `lprofile.h`, `lprofile.c` | 状态发布、pending 请求、safe point、allocation 事件和 stack capture |
-| `lvm.c` | instruction dispatch safe point，以及进入/离开 Lua 执行状态 |
-| `ldo.c` | C function/continuation 状态、yield/resume、异常 unwind 和 protected call 恢复 |
-| `lgc.c` | incremental/full GC 等入口的 GC 状态边界 |
-| `lmem.c` | 成功 alloc/free/realloc 和失败 realloc 的完整事件 |
-| `ldebug.c`, `ldebug.h` | 在 VM 内部获取 sampled frame 的 best-effort 调用名 |
-| `Makefile` | 编译并链接 `lprofile.c` |
-
-使用 amalgamated build 的 Lua 还需要在对应文件中包含 `lprofile.c`；Skynet Lua 的参考
-实现修改了 `3rd/lua/onelua.c`。
-
-这些修改是一个整体。尤其不能只复制 `lprofile.c`/`lprofile.h`，否则会缺少 safe
-point、C/GC 状态或 allocator 事件。移植后必须保持以下 contract：
-
-- profiler callback 不能调用 Lua、通过 Lua 分配内存或抛出错误。
-- `lua_profile_request` 可以从 timer signal handler 增加 pending 权重，但 stack 只在
-  下一个 VM safe point 捕获。
-- allocation callback 从 `lmem.c` 接收 `lua_State *`；不改变 `lua_Alloc` ABI，也不把
-  profiler 状态塞入 allocator 的 `ud`。
-- 成功 realloc 表示旧 block 结束和一个完整的新 allocation；失败 realloc 保留旧 block。
-- Lua stack 正在 relocation 时，capture 返回空 stack 并报告 truncation，不能遍历暂时
-  失效的 `CallInfo` 指针。
-- error、yield、resume 和 coroutine 切换后，发布状态必须与当前 `CallInfo` 一致。
-
-Skynet patch 同时包含 Lua bridge 和宿主 scheduler 集成。Skynet fork 有差异时，应按
-后文分别移植这两部分。
+必须直接审查完整 patch 并重新运行对应验证，不能只挑选部分 diff。三份 porting 文档
+不再重复维护逐文件、逐字段或逐函数的文字说明；实时生成的 patch 是实现差异的唯一
+准确来源。Skynet patch 同时包含 Lua bridge 和宿主 scheduler 集成。
 
 ## 4. thread-per-VM 项目接入
 
