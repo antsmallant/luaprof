@@ -4,16 +4,6 @@
 并输出标准 pprof profile。当前支持固定 Lua 5.4.8、Lua 5.5.0 fork 的
 thread-per-VM 宿主，以及使用定制 Lua 5.5 的固定 Skynet fork。
 
-## 环境要求
-
-- Linux、C11 编译器、GNU Make、POSIX threads
-- zlib 开发文件
-- Go `pprof`；生成 SVG 或图形化报告时还需要 Graphviz
-- 能通过 HTTPS 访问 GitHub；公开 submodule 不需要 SSH key
-
-原版 Lua 没有 `luaprof` 所需的 VM bridge。默认构建使用固定 Lua 5.4.8 fork；显式
-Lua 5.5 和 Skynet target 分别使用固定 Lua 5.5.0 fork 与 Skynet 自带的定制 Lua。
-
 ## 构建与测试
 
 ```sh
