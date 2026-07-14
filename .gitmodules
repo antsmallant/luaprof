@@ -1,8 +1,8 @@
 [submodule "3rd/lua-5.4.8"]
 	path = 3rd/lua-5.4.8
-	url = git@github.com:antsmallant/lua-5.4.8.git
+	url = https://github.com/antsmallant/lua-5.4.8.git
 	branch = luaprof
 [submodule "integration/skynet"]
 	path = integration/skynet
-	url = git@github.com:antsmallant/skynet.git
+	url = https://github.com/antsmallant/skynet.git
 	branch = luaprof

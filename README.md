@@ -12,7 +12,7 @@ Skynet service（使用 Skynet 固定的定制 Lua 5.5）。V1 有意不包含 c
 - C11 编译器、GNU Make、POSIX threads 和 zlib 开发文件
 - 默认构建需要 `3rd/` 中固定版本的 `lua-5.4.8` fork；原版 Lua 没有暴露所需的
   profiling bridge
-- 能通过 GitHub SSH 初始化已配置的 submodule URL
+- 能通过 HTTPS 访问 GitHub；公开 submodule 初始化不需要 GitHub SSH key
 - 使用 Go 的 `pprof` 命令读取默认输出；生成 SVG 和基于图的 Web 报告还需要 Graphviz
 
 profiler core 不依赖 Skynet。Skynet 支持是通过 `integration/skynet` 中固定版本 fork
@@ -22,7 +22,7 @@ code cache 以及 shared Proto/table 支持。
 ## 快速开始
 
 ```sh
-git clone git@github.com:antsmallant/luaprof.git
+git clone https://github.com/antsmallant/luaprof.git
 cd luaprof
 make
 make test
@@ -291,20 +291,32 @@ allocation timeline 和 VM object snapshot 不在 V1 范围内。
 父仓库固定准确的 Lua 和 Skynet commit。`branch = luaprof` 只用于标识协作分支；
 普通构建不会浮动到远端最新 commit。
 
-修改 fork 时，先提交并推送 fork，再更新父仓库 gitlink：
+公开 checkout 的 submodule fetch URL 使用 HTTPS，因此构建和测试不需要 GitHub SSH
+凭据。维护 fork 时，建议在父仓库之外使用独立 checkout；开发者可以只为该 checkout
+设置 SSH push URL：
 
 ```sh
-git -C 3rd/lua-5.4.8 switch luaprof
-git -C 3rd/lua-5.4.8 add src/lprofile.c
-git -C 3rd/lua-5.4.8 commit -m "describe the Lua change"
-git -C 3rd/lua-5.4.8 push origin luaprof
+git clone --branch luaprof https://github.com/antsmallant/lua-5.4.8.git ../lua-5.4.8
+git -C ../lua-5.4.8 remote set-url --push origin \
+    git@github.com:antsmallant/lua-5.4.8.git
+git clone --branch luaprof https://github.com/antsmallant/skynet.git ../skynet
+git -C ../skynet remote set-url --push origin \
+    git@github.com:antsmallant/skynet.git
+```
+
+修改、测试、提交并推送独立 fork 后，在父仓库更新对应 gitlink：
+
+```sh
+git submodule update --remote 3rd/lua-5.4.8
 git add 3rd/lua-5.4.8
 git commit -m "build: update Lua submodule"
 ```
 
-`integration/skynet` 使用相同的步骤。全新 checkout 应执行
+`integration/skynet` 使用相同流程，将命令中的 path 换为 `integration/skynet`。执行
+`git submodule update --remote` 前，必须先确认 fork 的 `luaprof` commit 已经推送；更新后
+应运行相应测试并检查 gitlink diff。全新 checkout 应执行
 `git submodule update --init 3rd/lua-5.4.8 integration/skynet`，以恢复准确固定的
-commit，且不会下载未使用的嵌套依赖。
+commit。两个 URL 都是公开 HTTPS 地址，且不会下载未使用的嵌套依赖。
 
 Skynet Lua 的 profiling 修改应放在 `integration/skynet/3rd/lua` 中，并作为 Skynet
 fork 的一部分提交。不要用父项目 Lua fork 替换该目录，也不要把父项目的 `LUA_INC`/

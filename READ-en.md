@@ -14,7 +14,8 @@ customized Lua 5.5. V1 intentionally does not include call/return tracing.
 - A C11 compiler, GNU Make, POSIX threads and zlib development files
 - The pinned `lua-5.4.8` fork in `3rd/` for the default build; stock Lua does
   not expose the required profiling bridge
-- GitHub SSH access for initializing the configured submodule URLs
+- HTTPS access to GitHub; public submodule initialization does not require a
+  GitHub SSH key
 - Go's `pprof` command for reading the default output; Graphviz is additionally
   required for SVG and graph-based web reports
 
@@ -26,7 +27,7 @@ Proto/table support.
 ## Quick start
 
 ```sh
-git clone git@github.com:antsmallant/luaprof.git
+git clone https://github.com/antsmallant/luaprof.git
 cd luaprof
 make
 make test
@@ -320,20 +321,36 @@ The parent repository pins exact Lua and Skynet commits. The `branch = luaprof`
 entries only identify the collaboration branches; normal builds never float to
 their latest remote commits.
 
-When changing a fork, commit and push it first, then update the parent gitlink:
+Public checkouts use HTTPS submodule fetch URLs, so builds and tests do not need
+GitHub SSH credentials. Fork maintainers should use independent checkouts next
+to the parent repository. An SSH push URL can be configured only for those
+development checkouts:
 
 ```sh
-git -C 3rd/lua-5.4.8 switch luaprof
-git -C 3rd/lua-5.4.8 add src/lprofile.c
-git -C 3rd/lua-5.4.8 commit -m "describe the Lua change"
-git -C 3rd/lua-5.4.8 push origin luaprof
+git clone --branch luaprof https://github.com/antsmallant/lua-5.4.8.git ../lua-5.4.8
+git -C ../lua-5.4.8 remote set-url --push origin \
+    git@github.com:antsmallant/lua-5.4.8.git
+git clone --branch luaprof https://github.com/antsmallant/skynet.git ../skynet
+git -C ../skynet remote set-url --push origin \
+    git@github.com:antsmallant/skynet.git
+```
+
+After changing, testing, committing, and pushing an independent fork, update
+the corresponding gitlink in the parent repository:
+
+```sh
+git submodule update --remote 3rd/lua-5.4.8
 git add 3rd/lua-5.4.8
 git commit -m "build: update Lua submodule"
 ```
 
-Use the same sequence for `integration/skynet`. A fresh checkout should use
+Use the same sequence for `integration/skynet`, replacing the path in the
+command. Before `git submodule update --remote`, verify that the fork's
+`luaprof` commit has been pushed; after the update, run the relevant tests and
+inspect the gitlink diff. A fresh checkout should use
 `git submodule update --init 3rd/lua-5.4.8 integration/skynet` to restore the
-exact pinned commits without downloading unused nested dependencies.
+exact pinned commits. Both URLs are public HTTPS endpoints, and the command does
+not download unused nested dependencies.
 
 Profiling changes for Skynet Lua belong in `integration/skynet/3rd/lua` and are
 committed as part of the Skynet fork. Do not replace that tree with the parent
