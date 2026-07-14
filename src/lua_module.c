@@ -9,6 +9,10 @@
 #include <lauxlib.h>
 #include <lua.h>
 
+#if !defined(LUA_USE_LUAPROF)
+#error "luaprof requires Lua built with LUAPROF=1"
+#endif
+
 #if defined(LUAPROF_EXPECT_LUA_VERSION)
 _Static_assert(LUA_VERSION_NUM == LUAPROF_EXPECT_LUA_VERSION,
 	"luaprof module built against an unexpected Lua ABI");

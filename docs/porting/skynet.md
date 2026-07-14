@@ -45,6 +45,21 @@ git -C /path/to/your-skynet apply /tmp/luaprof-skynet.patch
 make skynet
 ```
 
+Skynet patch 默认同时关闭内嵌 Lua bridge 和 scheduler hook；父项目 target 会自动传入
+`LUAPROF=1`、host library 和 include path。直接构建目标 Skynet 时使用：
+
+```sh
+make clean
+make -C 3rd/lua clean
+make linux LUAPROF=1 \
+    LUAPROF_HOST_LIB=/path/to/libluaprof-skynet-host.a \
+    LUAPROF_INC=/path/to/luaprof/include
+```
+
+普通 `make linux` 不要求 luaprof header/library，也不含额外 VM 或 dispatch 路径。Skynet
+的普通 `make clean` 不清理 `3rd/lua` object，切换开关前必须同时执行上面的两条 clean
+命令。
+
 参考 module 是 `build/skynet/luaprof.so`，必须使用同一份 `skynet/3rd/lua` header 构建。
 它不能与 `build/lua55/luaprof.so` 互换。host library 必须链接进 `skynet` 主程序，并导出
 host API；具体编译、链接和 `lua_cpath` 设置见[接入指南](../integration.md)。

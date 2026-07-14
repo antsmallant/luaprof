@@ -57,6 +57,19 @@ git submodule update --init 3rd/lua-5.5.0
 make lua55
 ```
 
+这些 fork 默认关闭 profiling bridge；父项目的 `make lua`、`make lua55` 和 module target
+会自动以 `LUAPROF=1` 构建。脱离父项目直接构建 fork 时必须显式启用：
+
+```sh
+make clean
+make linux LUAPROF=1
+```
+
+`LUAPROF=1` 会对全部 Lua core translation unit 定义 `LUA_USE_LUAPROF`，加入
+`lprofile.o`、公开 bridge API 和内部状态。普通 `make linux` 不包含这些内容，也没有 VM、
+GC 或 allocator 的 profiling fast path。切换开关前必须 `make clean`，否则 Make 可能复用
+使用另一套宏编译的旧 object。
+
 宿主必须改为包含并链接这棵 Lua 的 `src/lua.h` 和 `src/liblua.a`。不要只替换头文件，
 也不要让 `luaprof.so` 与宿主分别使用两份不同的 Lua。
 
@@ -124,6 +137,8 @@ make module-lua55 \
 Makefile 中 `$(LUA_MODULE)` 的 source list 和编译参数移入项目构建系统。关键要求是：
 
 - 所有 module object 使用 C11、`-fPIC` 和目标 Lua 的 include path。
+- Lua core 和 luaprof module 编译时都定义 `LUA_USE_LUAPROF`；推荐通过 fork 的
+  `LUAPROF=1` 统一设置 Lua core，不要只给个别 `.c` 文件加宏。
 - PUC Lua 5.4.8/5.5.0 module 分别定义 `LUAPROF_EXPECT_LUA_VERSION=504/505`。
 - shared module 链接 `-lm -lz -ldl -pthread -lrt`。
 - module 保留对 `lua_*` 和 `lua_profile_*` 的未定义引用，由宿主正在运行的 Lua 解析；
@@ -204,14 +219,20 @@ ar rcs libluaprof-skynet-host.a skynet_host.o
 
 把静态库链接进 `skynet` 可执行文件，而不是 Lua service module，并保证主程序使用
 `-Wl,-E`（或等价的 `--export-dynamic`）。还需要 C11、pthread、realtime timer 和
-`dlopen` 对应的链接环境。参考 Makefile 关系为：
+`dlopen` 对应的链接环境。应用当前 Skynet patch 后，使用统一构建入口：
 
-```make
-SKYNET_DEFINES += -DSKYNET_LUAPROF -I/path/to/luaprof/include
-
-skynet: $(SKYNET_OBJECTS) libluaprof-skynet-host.a $(LUA_LIB)
-	$(CC) -Wl,-E -o $@ $^ $(SKYNET_LIBS) -pthread -lrt -ldl
+```sh
+make clean
+make -C 3rd/lua clean
+make linux LUAPROF=1 \
+    LUAPROF_HOST_LIB=/path/to/libluaprof-skynet-host.a \
+    LUAPROF_INC=/path/to/luaprof/include
 ```
+
+`LUAPROF=1` 同时让内嵌 Lua 定义 `LUA_USE_LUAPROF`，并让 Skynet 主程序定义
+`SKYNET_LUAPROF`、链接 host library。普通 `make linux` 两层都关闭，不要求 luaprof header
+或 library。Skynet 的普通 `make clean` 不清理内嵌 Lua object，因此切换模式时上面的第二条
+命令不能省略。父仓库的 `make skynet` 已自动传入启用参数。
 
 `luaprof.so` 通过 `dlsym(RTLD_DEFAULT, "lp_skynet_host_get_api")` 自动发现这个 host
 backend。缺少 host library 时，module 会退回 thread-per-VM backend；这对会迁移的

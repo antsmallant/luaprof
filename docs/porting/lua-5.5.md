@@ -44,6 +44,17 @@ make lua55
 make module-lua55
 ```
 
+patch 后的 Lua fork 默认关闭 bridge；父项目 target 会自动传入 `LUAPROF=1`。直接在目标
+Lua 仓库构建时使用：
+
+```sh
+make clean
+make linux LUAPROF=1
+```
+
+普通 `make linux` 不编译 `lprofile.c`，也不公开 profiling ABI。切换启用状态前必须 clean
+rebuild，不能复用另一种模式生成的 object。
+
 module 产物是 `build/lua55/luaprof.so`。自有项目必须用应用 patch 后的同一棵 Lua 5.5
 源码构建 Lua 和 module。不要复用 `build/luaprof.so` 或 `build/skynet/luaprof.so`；三者
 分别对应不同 Lua ABI。自定义路径和宿主链接参数见[接入指南](../integration.md)。

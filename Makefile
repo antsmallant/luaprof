@@ -81,7 +81,9 @@ LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-lua-symbols test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-porting-patches test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+override CPPFLAGS += -DLUA_USE_LUAPROF
+
+.PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-feature-gates test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-lua-symbols test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-porting-patches test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -95,13 +97,13 @@ submodule-skynet:
 	git submodule update --init integration/skynet
 
 lua: submodule-lua
-	$(MAKE) -C $(LUA_DIR) $(LUA_PLATFORM)
+	$(MAKE) -C $(LUA_DIR) $(LUA_PLATFORM) LUAPROF=1
 
 lua55: submodule-lua55
-	$(MAKE) -C $(LUA55_DIR) $(LUA_PLATFORM)
+	$(MAKE) -C $(LUA55_DIR) $(LUA_PLATFORM) LUAPROF=1
 
 skynet-lua: submodule-skynet
-	$(MAKE) -C $(SKYNET_LUA_DIR) $(LUA_PLATFORM)
+	$(MAKE) -C $(SKYNET_LUA_DIR) $(LUA_PLATFORM) LUAPROF=1
 
 $(SKYNET_LUA_LIB): skynet-lua
 
@@ -358,7 +360,10 @@ example-lua55: module-lua55
 
 test: test-thread-vm test-runtime test-cpu-core test-memory-core test-lua-symbols test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
-test-all: test test-lua55 test-skynet test-porting-patches
+test-all: test test-lua55 test-skynet test-porting-patches test-feature-gates
+
+test-feature-gates: submodule-lua submodule-lua55 submodule-skynet
+	./tests/integration/feature_gates.sh
 
 test-porting-patches: submodule-lua submodule-lua55 submodule-skynet
 	./tests/integration/porting_patches.sh
@@ -452,8 +457,9 @@ bench-skynet-combined: $(SKYNET_COMBINED_SAMPLING_BENCH)
 
 skynet: submodule-skynet skynet-module $(SKYNET_HOST_LIB)
 	$(MAKE) -C $(SKYNET_DIR) linux \
-		LUAPROF_HOST_LIB=$(SKYNET_HOST_LIB) MALLOC_STATICLIB= \
-		SKYNET_DEFINES="-DNOUSE_JEMALLOC -DSKYNET_LUAPROF -I$(INCLUDE_DIR)"
+		LUAPROF=1 LUAPROF_HOST_LIB=$(SKYNET_HOST_LIB) \
+		LUAPROF_INC=$(INCLUDE_DIR) MALLOC_STATICLIB= \
+		SKYNET_DEFINES="-DNOUSE_JEMALLOC"
 
 test-skynet: skynet $(SKYNET_VM_BRIDGE_TEST)
 	./tests/integration/skynet_lua_boundary.sh

@@ -36,6 +36,11 @@ Lua 都报告 505，它们仍是不同 VM ABI，不能互换 module，也不能�
 - Lua VM bridge：`LUA_PROFILE_ABI_VERSION == 2`
 - Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 1`
 
+三个 fork 的 profiling 功能默认关闭。Lua fork 使用 `LUAPROF=1` 定义
+`LUA_USE_LUAPROF`；Skynet 的同名 Make 变量还会启用 `SKYNET_LUAPROF` 并链接 host
+library。父仓库所有 VM/module target 都显式启用，不依赖 fork 的默认值。修改 feature gate
+时必须同时验证普通 macro-off 构建和父项目 macro-on 构建；切换模式前要 clean rebuild。
+
 修改公开结构、callback 语义或 symbol contract 时，必须评估并更新 ABI version、两棵
 Lua fork、module 和 contract test。
 
@@ -160,6 +165,7 @@ Skynet 自带的 `3rd/lua`，并分别运行对应 bridge test。
 ./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
 ./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
 make test-porting-patches
+make test-feature-gates
 ```
 
 脚本中的 baseline 对应未修改的固定上游版本，只有明确更换或 rebase 基线时才修改；
