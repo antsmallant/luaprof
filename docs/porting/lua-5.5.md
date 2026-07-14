@@ -10,21 +10,22 @@ Skynet 定制 Lua 都报告 `LUA_VERSION_NUM == 505`，但它们不是同一 VM 
 
 ```text
 baseline: 1097dbe
-bridge:   074659c
+target:   3rd/lua-5.5.0 当前 HEAD
 ABI:      LUA_PROFILE_ABI_VERSION == 2
 ```
 
-完整 patch：
+在 `luaprof` 根目录生成、检查并应用完整 patch：
 
 ```sh
-git -C 3rd/lua-5.5.0 diff 1097dbe..074659c -- src
-git -C 3rd/lua-5.5.0 diff --binary 1097dbe..074659c -- src \
-    > /tmp/luaprof-lua55.patch
+./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
 git -C /path/to/your-lua apply --check /tmp/luaprof-lua55.patch
+git -C /path/to/your-lua apply /tmp/luaprof-lua55.patch
 ```
 
-目标正好是 PUC Lua 5.5.0 基线时可以应用 patch。其他 5.5.x 或定制 VM 应按函数移植。
-不要用 Skynet 的整棵 `3rd/lua` 替换 PUC Lua。
+脚本只固定 baseline，终点始终是 submodule 当前 `HEAD`，并对仓库根目录 `-- .` 生成
+完整 binary/full-index diff；后续 bridge commit 或修改文件变化时无需更新命令。目标正好
+是 PUC Lua 5.5.0 基线时可以直接应用。其他 5.5.x 或定制 VM 应先执行 `--check`，冲突时
+按函数移植。不要用 Skynet 的整棵 `3rd/lua` 替换 PUC Lua。
 
 ## 2. 新增 contract 与实现文件
 
@@ -40,8 +41,9 @@ git -C /path/to/your-lua apply --check /tmp/luaprof-lua55.patch
 
 ### `src/lprofile.h` 与 `src/lprofile.c`
 
-从 `074659c` 完整复制这两个新增文件。它们实现 state guard、atomic pending、safe
-point、allocation event 和 profiler-safe stack capture。不要只复制 API 声明。
+从当前固定 Lua 5.5 fork 完整复制这两个新增文件。它们实现 state guard、atomic
+pending、safe point、allocation event 和 profiler-safe stack capture。不要只复制
+API 声明。
 
 ### `src/lstate.h`
 

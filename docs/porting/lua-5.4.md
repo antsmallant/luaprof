@@ -11,21 +11,22 @@
 
 ```text
 baseline: 46f8c3d
-bridge:   02c8f57
+target:   3rd/lua-5.4.8 当前 HEAD
 ABI:      LUA_PROFILE_ABI_VERSION == 2
 ```
 
-查看或生成完整 patch：
+在 `luaprof` 根目录生成完整 patch，并先对目标 Lua 做 dry-run：
 
 ```sh
-git -C 3rd/lua-5.4.8 diff 46f8c3d..02c8f57 -- src
-git -C 3rd/lua-5.4.8 diff --binary 46f8c3d..02c8f57 -- src \
-    > /tmp/luaprof-lua54.patch
+./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
 git -C /path/to/your-lua apply --check /tmp/luaprof-lua54.patch
+git -C /path/to/your-lua apply /tmp/luaprof-lua54.patch
 ```
 
-目标正好是同一基线时可以应用 patch。其他 5.4.x 或已有内部修改的 fork 应按下列函数
-逐项移植，不能只复制新增文件。
+脚本固定 baseline，但始终 diff 到 submodule 当前 `HEAD`，并使用仓库根目录 `-- .`，所以
+以后 bridge 修改或增加文件时不需要维护 target commit 和文件清单。它忽略 untracked
+文件，并在存在未提交的 tracked 修改时拒绝生成。目标正好是同一基线时可以直接应用；
+其他 5.4.x 或已有内部修改的 fork 应先执行 `--check`，冲突时结合下列函数说明逐项移植。
 
 ## 2. 公开 bridge contract
 

@@ -81,7 +81,7 @@ LDFLAGS ?=
 LDLIBS ?=
 LUA_PLATFORM ?= linux
 
-.PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-lua-symbols test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-lua-symbols test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-porting-patches test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 
 all: thread-vm module
 
@@ -358,7 +358,10 @@ example-lua55: module-lua55
 
 test: test-thread-vm test-runtime test-cpu-core test-memory-core test-lua-symbols test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
-test-all: test test-lua55 test-skynet
+test-all: test test-lua55 test-skynet test-porting-patches
+
+test-porting-patches: submodule-lua submodule-lua55 submodule-skynet
+	./tests/integration/porting_patches.sh
 
 test-lua55: test-lua55-thread-vm test-lua55-lua-symbols test-lua55-api test-lua55-boundary test-lua55-vm-bridge test-lua55-cpu-sampling test-lua55-memory-sampling test-lua55-combined-sampling
 

@@ -10,19 +10,23 @@ service 迁移 worker 后继续跟踪，但不会把整个 Skynet 进程合并�
 
 ```text
 baseline: f19d160
-bridge:   0af0699
+target:   integration/skynet 当前 HEAD
 Lua ABI:  customized Lua 5.5, LUA_PROFILE_ABI_VERSION == 2
 ```
 
-查看完整修改：
+在 `luaprof` 根目录生成、检查并应用完整 patch：
 
 ```sh
-git -C integration/skynet diff f19d160..0af0699 -- \
-    3rd/lua Makefile skynet-src/skynet_server.c skynet-src/skynet_start.c
+./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
+git -C /path/to/your-skynet apply --check /tmp/luaprof-skynet.patch
+git -C /path/to/your-skynet apply /tmp/luaprof-skynet.patch
 ```
 
-该 diff 包含两部分：内嵌 Lua 的 VM bridge，以及 Skynet host/scheduler 集成。目标 fork
-不是相同基线时必须分别按函数移植，不能用父项目的 PUC Lua 5.5 替换 `3rd/lua`。
+脚本只固定 baseline，终点始终是 Skynet submodule 当前 `HEAD`，并对仓库根目录 `-- .`
+生成完整 diff，因此以后新增 host、scheduler 或内嵌 Lua 修改文件时不需要维护命令。该
+diff 包含内嵌 Lua VM bridge 和 Skynet host/scheduler 集成。目标 fork 不是相同基线时
+先执行 `--check`；有冲突时必须分别按函数移植，不能用父项目的 PUC Lua 5.5 替换
+`3rd/lua`。
 
 ## 2. 内嵌 Lua bridge
 

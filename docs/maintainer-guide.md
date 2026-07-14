@@ -105,8 +105,8 @@ Lua fork：
 ```sh
 git submodule update --remote 3rd/lua-5.4.8
 git diff --submodule=log -- 3rd/lua-5.4.8
-make test
 git add 3rd/lua-5.4.8
+make test
 git commit -m "build: update Lua submodule"
 ```
 
@@ -115,8 +115,8 @@ Lua 5.5 fork 使用相同流程：
 ```sh
 git submodule update --remote 3rd/lua-5.5.0
 git diff --submodule=log -- 3rd/lua-5.5.0
-make test-lua55
 git add 3rd/lua-5.5.0
+make test-lua55
 git commit -m "build: update Lua 5.5 submodule"
 ```
 
@@ -125,8 +125,8 @@ Skynet fork：
 ```sh
 git submodule update --remote integration/skynet
 git diff --submodule=log -- integration/skynet
-make test-skynet
 git add integration/skynet
+make test-skynet
 git commit -m "build: update Skynet submodule"
 ```
 
@@ -156,6 +156,23 @@ bridge 改动通常需要同时更新：
 
 不要只修改其中一个 PUC Lua fork。若 contract 也适用于 Skynet，必须将等效改动移植到
 Skynet 自带的 `3rd/lua`，并分别运行两套 bridge test。
+
+### 生成移植 patch
+
+提交 fork 并更新父仓库 submodule 后，用当前 `HEAD` 生成对外移植 patch：
+
+```sh
+./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
+./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
+./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
+make test-porting-patches
+```
+
+脚本中的 baseline 对应未修改的固定上游版本，只有明确更换或 rebase 基线时才修改；
+target 始终是相应 submodule 的 `HEAD`，不写死 commit。diff 范围是仓库根目录 `-- .`，
+后续新增修改文件也会自动进入 patch。脚本检测到未提交的 tracked 修改会失败，应先在
+独立 fork 完成 commit/push，再更新父仓库 gitlink。脚本不执行 fetch；这里的 `HEAD`
+就是 submodule 当前检出的 commit，不等同于远端分支自动最新值。
 
 ### Skynet Lua 的约束
 
@@ -205,6 +222,8 @@ make test-skynet
 make example-skynet
 make bench-skynet-vm
 make bench-skynet-combined
+
+make test-porting-patches
 ```
 
 只修改文档或 submodule URL 时，至少执行 `git diff --check`、公开 HTTPS clone 和 direct

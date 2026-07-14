@@ -72,16 +72,19 @@ Skynet 不能使用父项目的 PUC Lua fork。必须保留 Skynet 自带的 `3r
 - [Lua 5.5 bridge 移植](porting/lua-5.5.md)
 - [Skynet embedded Lua 与 scheduler 移植](porting/skynet.md)
 
-两套 PUC Lua 的完整 reference diff 是：
+从固定 baseline 到当前 submodule `HEAD` 生成完整 patch：
 
 ```sh
-git -C 3rd/lua-5.4.8 diff 46f8c3d..02c8f57 -- src
-git -C 3rd/lua-5.5.0 diff 1097dbe..074659c -- src
+./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
+./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
+./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
 ```
 
-如果目标正好基于相同版本，可以先生成 patch 并使用 `git apply --check` 检查；如果
-Lua 已有内部改造，应按对应函数逐项移植并审查，不能盲目套用 patch。需要一起移植的
-文件和职责如下：
+脚本内部只固定三个 baseline，终点使用对应仓库的 `HEAD`，修改范围使用仓库根目录
+`-- .`；后续 fork 提交变化时不需要修改 target hash 或文件清单。目标正好基于相同版本
+时，先用 `git apply --check` 检查再正式 apply。`HEAD` 指本地 submodule 当前检出的
+commit，脚本不会自动 fetch 远端；维护者应先更新 submodule。如果 Lua 已有内部改造，
+应按对应函数逐项移植并审查，不能盲目套用 patch。需要一起移植的文件和职责如下：
 
 | 文件 | 必需改动 |
 | --- | --- |
@@ -111,15 +114,8 @@ point、C/GC 状态或 allocator 事件。移植后必须保持以下 contract�
   失效的 `CallInfo` 指针。
 - error、yield、resume 和 coroutine 切换后，发布状态必须与当前 `CallInfo` 一致。
 
-Skynet 当前参考 diff 是：
-
-```sh
-git -C integration/skynet diff f19d160..0af0699 -- \
-    3rd/lua Makefile skynet-src/skynet_server.c skynet-src/skynet_start.c
-```
-
-该 diff 同时包含 Lua bridge 和宿主 scheduler 集成。Skynet fork 有差异时，应按后文
-分别移植这两部分。
+Skynet patch 同时包含 Lua bridge 和宿主 scheduler 集成。Skynet fork 有差异时，应按
+后文分别移植这两部分。
 
 ## 4. thread-per-VM 项目接入
 
