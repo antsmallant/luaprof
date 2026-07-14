@@ -1,6 +1,7 @@
 # Integrating luaprof into an existing project
 
-[中文](integration.md)
+[中文](integration.md) | [README](../READ-en.md) |
+[Sampling model](profiling-model-en.md) | [Maintainer guide](maintainer-guide-en.md)
 
 This guide explains how to integrate `luaprof` into an existing Linux project:
 either a thread-per-VM host where each Lua VM stays on one OS thread, or Skynet,

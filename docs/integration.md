@@ -1,6 +1,7 @@
 # luaprof 项目接入指南
 
-[English](integration-en.md)
+[English](integration-en.md) | [README](../README.md) |
+[采样模型](profiling-model.md) | [维护者指南](maintainer-guide.md)
 
 本文说明如何把 `luaprof` 接入一个已有的 Linux 项目，包括固定线程运行一个 Lua VM 的
 thread-per-VM 宿主，以及允许 Lua service 在 worker 之间迁移的 Skynet。Lua 层的使用
