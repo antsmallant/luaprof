@@ -2,10 +2,9 @@
 
 [English](READ-en.md)
 
-`luaprof` 是面向 PUC Lua 的 Linux 采样分析器，支持相互独立的 CPU 和内存 recorder，
+`luaprof` 是面向 Lua 的 Linux 采样分析器，支持相互独立的 CPU 和内存 recorder，
 并输出标准 pprof profile。当前支持固定 Lua 5.4.8、Lua 5.5.0 fork 的
-thread-per-VM 宿主，以及使用定制 Lua 5.5 的固定 Skynet fork。V1 不包含
-call/return tracing。
+thread-per-VM 宿主，以及使用定制 Lua 5.5 的固定 Skynet fork。
 
 ## 环境要求
 
@@ -104,12 +103,6 @@ worker 时继续跟踪；它不是整个 Skynet 进程的合并 profile。项目
 - [采样模型与结果解读](docs/profiling-model.md)：API、CPU/内存语义、pprof、统计项与限制。
 - [维护者指南](docs/maintainer-guide.md)：fork、submodule、双 Lua ABI 和发布流程。
 
-## 支持范围
+## 许可证
 
-- 固定 PUC Lua 5.4.8 或 Lua 5.5.0 fork 的 Linux thread-per-VM 宿主
-- 固定 Skynet fork 及其定制 Lua 5.5
-- Lua/CFunction/GC 状态归因和 Lua stack
-- pprof 与 folded-stack 导出
-
-Windows、macOS、native C stack unwinding、tracing、allocation timeline 和 VM object
-snapshot 不在 V1 范围内。
+本项目使用 [MIT License](LICENSE)。
