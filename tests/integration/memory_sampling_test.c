@@ -98,7 +98,12 @@ tracking_allocator(void *userdata, void *pointer, size_t old_size,
 static void
 open_vm(test_vm *vm) {
 	memset(vm, 0, sizeof(*vm));
+#if defined(LUAPROF_LUA_EXPLICIT_SEED)
+	vm->L = lua_newstate(tracking_allocator, &vm->tracker,
+		luaL_makeseed(NULL));
+#else
 	vm->L = lua_newstate(tracking_allocator, &vm->tracker);
+#endif
 	assert(vm->L != NULL);
 	luaL_openlibs(vm->L);
 	lp_lua_bridge_init(&vm->bridge, vm->L);

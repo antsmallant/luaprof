@@ -6,3 +6,7 @@
 	path = integration/skynet
 	url = https://github.com/antsmallant/skynet.git
 	branch = luaprof
+[submodule "3rd/lua-5.5.0"]
+	path = 3rd/lua-5.5.0
+	url = https://github.com/antsmallant/lua-5.5.0.git
+	branch = luaprof

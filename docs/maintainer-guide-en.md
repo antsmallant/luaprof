@@ -8,11 +8,12 @@ fork. Regular users need only the README and integration guide.
 
 ## 1. Repository and build boundaries
 
-The parent repository pins two direct submodules:
+The parent repository pins three direct submodules:
 
 | Path | Remote branch | Purpose |
 | --- | --- | --- |
 | `3rd/lua-5.4.8` | `luaprof` in `lua-5.4.8.git` | Thread-per-VM Lua 5.4.8 |
+| `3rd/lua-5.5.0` | `luaprof` in `lua-5.5.0.git` | Thread-per-VM Lua 5.5.0 |
 | `integration/skynet` | `luaprof` in `skynet.git` | Skynet host and its customized Lua 5.5 |
 
 Fetch URLs in `.gitmodules` must remain public HTTPS endpoints.
@@ -20,16 +21,18 @@ Fetch URLs in `.gitmodules` must remain public HTTPS endpoints.
 `git submodule update --remote`. Normal `make`, CI, and user checkouts use the
 exact commit in the parent gitlink and never follow a remote branch implicitly.
 
-The two Lua ABIs use different modules:
+The three Lua build boundaries use different modules:
 
 ```text
 build/luaprof.so          PUC Lua 5.4.8
+build/lua55/luaprof.so    PUC Lua 5.5.0
 build/skynet/luaprof.so   Skynet customized Lua 5.5
 ```
 
-They define `LUAPROF_EXPECT_LUA_VERSION=504` and `505`, respectively. The
-modules are not interchangeable, and neither module may statically include a
-second `liblua.a`.
+They define `LUAPROF_EXPECT_LUA_VERSION=504` and `505`, respectively. PUC Lua
+5.5 and Skynet Lua both report 505 but remain different VM ABIs. The modules
+are not interchangeable, and no module may statically include another
+`liblua.a`.
 
 Current ABI contracts are:
 
@@ -47,7 +50,8 @@ Users and CI should clone over HTTPS:
 ```sh
 git clone https://github.com/antsmallant/luaprof.git
 cd luaprof
-git submodule update --init 3rd/lua-5.4.8 integration/skynet
+git submodule update --init \
+    3rd/lua-5.4.8 3rd/lua-5.5.0 integration/skynet
 ```
 
 `make` initializes only the Lua submodule by default. Explicit Skynet targets
@@ -57,7 +61,8 @@ downloading unrelated nested submodules.
 After changing `.gitmodules`, run:
 
 ```sh
-git submodule sync -- 3rd/lua-5.4.8 integration/skynet
+git submodule sync -- \
+    3rd/lua-5.4.8 3rd/lua-5.5.0 integration/skynet
 ```
 
 Before committing, clone from the public URL into a clean directory and
@@ -73,6 +78,8 @@ Create independent checkouts next to the parent repository:
 git clone --branch luaprof \
     https://github.com/antsmallant/lua-5.4.8.git ../lua-5.4.8
 git clone --branch luaprof \
+    https://github.com/antsmallant/lua-5.5.0.git ../lua-5.5.0
+git clone --branch luaprof \
     https://github.com/antsmallant/skynet.git ../skynet
 ```
 
@@ -82,6 +89,8 @@ keep its public fetch URL:
 ```sh
 git -C ../lua-5.4.8 remote set-url --push origin \
     git@github.com:antsmallant/lua-5.4.8.git
+git -C ../lua-5.5.0 remote set-url --push origin \
+    git@github.com:antsmallant/lua-5.5.0.git
 git -C ../skynet remote set-url --push origin \
     git@github.com:antsmallant/skynet.git
 ```
@@ -107,6 +116,16 @@ git diff --submodule=log -- 3rd/lua-5.4.8
 make test
 git add 3rd/lua-5.4.8
 git commit -m "build: update Lua submodule"
+```
+
+Use the same workflow for the Lua 5.5 fork:
+
+```sh
+git submodule update --remote 3rd/lua-5.5.0
+git diff --submodule=log -- 3rd/lua-5.5.0
+make test-lua55
+git add 3rd/lua-5.5.0
+git commit -m "build: update Lua 5.5 submodule"
 ```
 
 Skynet fork:
@@ -135,8 +154,8 @@ After committing and pushing the parent, verify that `HEAD` matches
 
 ## 5. Modify the Lua bridge
 
-The complete PUC Lua bridge file set is documented in the
-[integration guide](integration-en.md#32-port-the-bridge-into-a-customized-lua).
+The complete PUC Lua bridge file sets are documented in the function-level
+[Lua 5.4](porting/lua-5.4-en.md) and [Lua 5.5](porting/lua-5.5-en.md) guides.
 A bridge change typically touches:
 
 - public profiler ABI in `lua.h`;
@@ -145,7 +164,7 @@ A bridge change typically touches:
 - `ldebug.*` for stack and call names;
 - build dependencies and amalgamated builds.
 
-Do not change only the parent Lua fork. If the contract applies to Skynet, port
+Do not change only one PUC Lua fork. If the contract applies to Skynet, port
 the equivalent change into Skynet's embedded `3rd/lua` and run both bridge test
 variants.
 
@@ -185,6 +204,11 @@ make test
 make example-thread-vm
 make bench-vm
 make bench-combined
+
+make test-lua55
+make example-lua55
+make bench-lua55-vm
+make bench-lua55-combined
 ```
 
 Skynet:
@@ -212,13 +236,15 @@ Before a public release or update, verify:
 - The README remains focused on first use and contains no local paths or
   internal workflow.
 - `.gitmodules` contains only public HTTPS fetch URLs.
-- Both gitlink commits are pushed to their respective `luaprof` branches.
+- All three gitlink commits are pushed to their respective `luaprof` branches.
 - Chinese and English README and documentation links resolve.
-- Both modules use the correct Lua ABI and do not contain another static Lua.
-- `make test` and `make test-skynet` pass.
+- All three modules use the correct Lua ABI and do not contain another static
+  Lua.
+- `make test`, `make test-lua55`, and `make test-skynet` pass.
 - Thread-per-VM and Skynet examples produce profiles readable by standard
   `go tool pprof`.
-- The parent and both forks contain no maintainer-owned uncommitted changes.
+- The parent and all three forks contain no maintainer-owned uncommitted
+  changes.
 
 Local workspace paths, independent checkout locations, and agent collaboration
 rules are internal development information. Record them in development

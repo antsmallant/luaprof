@@ -3,8 +3,9 @@
 [English](READ-en.md)
 
 `luaprof` 是面向 PUC Lua 的 Linux 采样分析器，支持相互独立的 CPU 和内存 recorder，
-并输出标准 pprof profile。当前支持固定 Lua 5.4.8 fork 的 thread-per-VM 宿主，以及
-使用定制 Lua 5.5 的固定 Skynet fork。V1 不包含 call/return tracing。
+并输出标准 pprof profile。当前支持固定 Lua 5.4.8、Lua 5.5.0 fork 的
+thread-per-VM 宿主，以及使用定制 Lua 5.5 的固定 Skynet fork。V1 不包含
+call/return tracing。
 
 ## 环境要求
 
@@ -13,8 +14,8 @@
 - Go `pprof`；生成 SVG 或图形化报告时还需要 Graphviz
 - 能通过 HTTPS 访问 GitHub；公开 submodule 不需要 SSH key
 
-原版 Lua 没有 `luaprof` 所需的 VM bridge。默认构建会使用仓库固定的 Lua fork，
-Skynet target 则使用 Skynet 自带并已修改的 Lua。
+原版 Lua 没有 `luaprof` 所需的 VM bridge。默认构建使用固定 Lua 5.4.8 fork；显式
+Lua 5.5 和 Skynet target 分别使用固定 Lua 5.5.0 fork 与 Skynet 自带的定制 Lua。
 
 ## 构建与测试
 
@@ -23,6 +24,13 @@ git clone https://github.com/antsmallant/luaprof.git
 cd luaprof
 make
 make test
+```
+
+Lua 5.5 使用独立构建产物和测试入口：
+
+```sh
+make test-lua55
+make example-lua55
 ```
 
 运行 thread-per-VM 示例：
@@ -98,7 +106,7 @@ worker 时继续跟踪；它不是整个 Skynet 进程的合并 profile。项目
 
 ## 支持范围
 
-- 固定 PUC Lua 5.4.8 fork 的 Linux thread-per-VM 宿主
+- 固定 PUC Lua 5.4.8 或 Lua 5.5.0 fork 的 Linux thread-per-VM 宿主
 - 固定 Skynet fork 及其定制 Lua 5.5
 - Lua/CFunction/GC 状态归因和 Lua stack
 - pprof 与 folded-stack 导出

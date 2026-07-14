@@ -4,8 +4,9 @@
 
 `luaprof` is a Linux sampling profiler for PUC Lua. It provides independent CPU
 and memory recorders and writes standard pprof profiles. It currently supports
-thread-per-VM hosts using the pinned Lua 5.4.8 fork and the pinned Skynet fork
-with its customized Lua 5.5. V1 does not include call/return tracing.
+thread-per-VM hosts using pinned Lua 5.4.8 and Lua 5.5.0 forks, plus the pinned
+Skynet fork with its customized Lua 5.5. V1 does not include call/return
+tracing.
 
 ## Requirements
 
@@ -15,8 +16,8 @@ with its customized Lua 5.5. V1 does not include call/return tracing.
 - HTTPS access to GitHub; public submodules do not require an SSH key
 
 Stock Lua does not provide the VM bridge required by `luaprof`. The default
-build uses the pinned Lua fork, while Skynet targets use Skynet's own modified
-Lua.
+build uses the pinned Lua 5.4.8 fork. Explicit Lua 5.5 and Skynet targets use
+the pinned Lua 5.5.0 fork and Skynet's own customized Lua, respectively.
 
 ## Build and test
 
@@ -25,6 +26,13 @@ git clone https://github.com/antsmallant/luaprof.git
 cd luaprof
 make
 make test
+```
+
+Lua 5.5 has a separate build artifact and test entry point:
+
+```sh
+make test-lua55
+make example-lua55
 ```
 
 Run the thread-per-VM example:
@@ -105,7 +113,7 @@ combined profile of the whole Skynet process. See the integration guide below.
 
 ## Supported scope
 
-- Linux thread-per-VM hosts using the pinned PUC Lua 5.4.8 fork
+- Linux thread-per-VM hosts using the pinned PUC Lua 5.4.8 or Lua 5.5.0 fork
 - The pinned Skynet fork and its customized Lua 5.5
 - Lua/CFunction/GC attribution and Lua stacks
 - pprof and folded-stack export

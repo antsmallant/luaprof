@@ -9,11 +9,12 @@ API 见项目根目录的 [README](../README.md)。
 
 ## 1. 先确认支持边界
 
-V1 正式支持以下两种组合：
+V1 正式支持以下组合：
 
 | 宿主 | Lua | CPU backend |
 | --- | --- | --- |
 | thread-per-VM | 项目固定的 PUC Lua 5.4.8 fork | `CLOCK_THREAD_CPUTIME_ID` |
+| thread-per-VM | 项目固定的 PUC Lua 5.5.0 fork | `CLOCK_THREAD_CPUTIME_ID` |
 | Skynet | 项目固定的 Skynet fork 及其内嵌定制 Lua 5.5 | 每个 worker 的线程 CPU timer |
 
 原版 Lua 不包含 `luaprof` 需要的 VM bridge。仅仅编译 `luaprof.so`，而不修改宿主实际
@@ -47,32 +48,41 @@ VM 数据结构重新审查，不能视为 ABI 兼容。
 
 ### 3.1 最稳妥的方式：采用固定 fork
 
-对于普通 PUC Lua 5.4.8 项目，直接采用本仓库 gitlink 固定的
-`3rd/lua-5.4.8` 是风险最低的方式：
+对于普通 PUC Lua 5.4 或 5.5 项目，直接采用本仓库固定的准确 fork 是风险最低的方式：
 
 ```sh
 git submodule update --init 3rd/lua-5.4.8
 make lua
+
+git submodule update --init 3rd/lua-5.5.0
+make lua55
 ```
 
 宿主必须改为包含并链接这棵 Lua 的 `src/lua.h` 和 `src/liblua.a`。不要只替换头文件，
 也不要让 `luaprof.so` 与宿主分别使用两份不同的 Lua。
 
-Skynet 不能使用父项目的 Lua 5.4.8 fork。必须保留 Skynet 自带的 `3rd/lua`，并把同一
+Skynet 不能使用父项目的 PUC Lua fork。必须保留 Skynet 自带的 `3rd/lua`，并把同一
 套 bridge 移植到该目录；本仓库固定的 `integration/skynet` 已经完成了这项工作，同时
 保留带 seed 的 `lua_newstate`、code cache 和 shared Proto/table。
 
 ### 3.2 移植到项目自己的 Lua
 
-当前 PUC Lua 5.4.8 bridge 的参考范围是：
+先选择与目标 major/minor 匹配的函数级指南：
+
+- [Lua 5.4 bridge 移植](porting/lua-5.4.md)
+- [Lua 5.5 bridge 移植](porting/lua-5.5.md)
+- [Skynet embedded Lua 与 scheduler 移植](porting/skynet.md)
+
+两套 PUC Lua 的完整 reference diff 是：
 
 ```sh
 git -C 3rd/lua-5.4.8 diff 46f8c3d..02c8f57 -- src
+git -C 3rd/lua-5.5.0 diff 1097dbe..074659c -- src
 ```
 
-如果目标正好基于相同的 Lua 5.4.8，可以先生成 patch 并使用 `git apply --check` 检查；
-如果 Lua 已有内部改造，应逐项移植并审查，不能盲目套用 patch。需要一起移植的文件和
-职责如下：
+如果目标正好基于相同版本，可以先生成 patch 并使用 `git apply --check` 检查；如果
+Lua 已有内部改造，应按对应函数逐项移植并审查，不能盲目套用 patch。需要一起移植的
+文件和职责如下：
 
 | 文件 | 必需改动 |
 | --- | --- |
@@ -116,14 +126,15 @@ git -C integration/skynet diff f19d160..0af0699 -- \
 
 ### 4.1 构建 module
 
-使用仓库固定 Lua 时直接执行：
+使用仓库固定 Lua 时按 ABI 选择 target：
 
 ```sh
-make module
+make module          # build/luaprof.so, PUC Lua 5.4.8
+make module-lua55    # build/lua55/luaprof.so, PUC Lua 5.5.0
 ```
 
-产物是 `build/luaprof.so`。对于标准目录结构的自有 PUC Lua 5.4.8，可以让当前
-Makefile 对那棵源码构建一个独立产物目录：
+对于标准目录结构的自有 PUC Lua，可以让当前 Makefile 对那棵源码构建独立产物目录。
+Lua 5.4：
 
 ```sh
 make module \
@@ -133,11 +144,21 @@ make module \
     BUILD_DIR=/absolute/path/to/project-build/luaprof-lua54
 ```
 
+Lua 5.5：
+
+```sh
+make module-lua55 \
+    LUA55_DIR=/absolute/path/to/lua-5.5.0 \
+    LUA55_SRC=/absolute/path/to/lua-5.5.0/src \
+    LUA55_LIB=/absolute/path/to/lua-5.5.0/src/liblua.a \
+    LUA55_BUILD_DIR=/absolute/path/to/project-build/luaprof-lua55
+```
+
 该方式会执行目标 Lua 目录的 `make linux`。自有 Lua 使用不同构建系统时，应把根
 Makefile 中 `$(LUA_MODULE)` 的 source list 和编译参数移入项目构建系统。关键要求是：
 
 - 所有 module object 使用 C11、`-fPIC` 和目标 Lua 的 include path。
-- PUC Lua 5.4.8 module 定义 `LUAPROF_EXPECT_LUA_VERSION=504`。
+- PUC Lua 5.4.8/5.5.0 module 分别定义 `LUAPROF_EXPECT_LUA_VERSION=504/505`。
 - shared module 链接 `-lm -lz -ldl -pthread -lrt`。
 - module 保留对 `lua_*` 和 `lua_profile_*` 的未定义引用，由宿主正在运行的 Lua 解析；
   不要把另一份 `liblua.a` 静态装进 module。

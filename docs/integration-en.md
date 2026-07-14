@@ -15,6 +15,7 @@ V1 officially supports these combinations:
 | Host | Lua | CPU backend |
 | --- | --- | --- |
 | thread-per-VM | The project's pinned PUC Lua 5.4.8 fork | `CLOCK_THREAD_CPUTIME_ID` |
+| thread-per-VM | The project's pinned PUC Lua 5.5.0 fork | `CLOCK_THREAD_CPUTIME_ID` |
 | Skynet | The pinned Skynet fork and its customized embedded Lua 5.5 | Per-worker thread CPU timers |
 
 Stock Lua does not contain the VM bridge required by `luaprof`. Building only
@@ -56,34 +57,44 @@ old/new requested sizes, and realloc success.
 
 ### 3.1 Lowest-risk option: use the pinned fork
 
-For a regular PUC Lua 5.4.8 project, use the exact `3rd/lua-5.4.8` gitlink
-pinned by this repository:
+For a regular PUC Lua 5.4 or 5.5 project, use the exact matching fork pinned by
+this repository:
 
 ```sh
 git submodule update --init 3rd/lua-5.4.8
 make lua
+
+git submodule update --init 3rd/lua-5.5.0
+make lua55
 ```
 
 The host must include and link this tree's `src/lua.h` and `src/liblua.a`. Do
 not replace only the headers, and do not let `luaprof.so` and the host use two
 different Lua copies.
 
-Skynet must not use the parent project's Lua 5.4.8 fork. Keep Skynet's own
+Skynet must not use either parent PUC Lua fork. Keep Skynet's own
 `3rd/lua` and port the same bridge into that directory. The pinned
 `integration/skynet` tree already does this while retaining seeded
 `lua_newstate`, code cache, and shared Proto/table behavior.
 
 ### 3.2 Port the bridge into a customized Lua
 
-The current PUC Lua 5.4.8 bridge reference is:
+First select the function-level guide matching the target major/minor version:
+
+- [Lua 5.4 bridge port](porting/lua-5.4-en.md)
+- [Lua 5.5 bridge port](porting/lua-5.5-en.md)
+- [Skynet embedded Lua and scheduler port](porting/skynet-en.md)
+
+The complete PUC Lua reference diffs are:
 
 ```sh
 git -C 3rd/lua-5.4.8 diff 46f8c3d..02c8f57 -- src
+git -C 3rd/lua-5.5.0 diff 1097dbe..074659c -- src
 ```
 
-For an identical 5.4.8 base, generate a patch and first run
-`git apply --check`. If the target Lua already has internal modifications, port
-and review each item instead of applying the patch blindly. The complete file
+For an identical base, generate a patch and first run `git apply --check`. If
+the target Lua already has internal modifications, port and review each
+function separately instead of applying the patch blindly. The complete file
 set and responsibilities are:
 
 | File | Required change |
@@ -130,15 +141,15 @@ Skynet fork has diverged, port those two parts separately as described below.
 
 ### 4.1 Build the module
 
-With the repository's pinned Lua, run:
+Select the target matching the pinned Lua ABI:
 
 ```sh
-make module
+make module          # build/luaprof.so, PUC Lua 5.4.8
+make module-lua55    # build/lua55/luaprof.so, PUC Lua 5.5.0
 ```
 
-The output is `build/luaprof.so`. For a customized PUC Lua 5.4.8 with the
-standard source layout, build against that tree into a distinct output
-directory:
+For a customized PUC Lua with the standard source layout, build against that
+tree into a distinct output directory. Lua 5.4:
 
 ```sh
 make module \
@@ -148,13 +159,23 @@ make module \
     BUILD_DIR=/absolute/path/to/project-build/luaprof-lua54
 ```
 
+Lua 5.5:
+
+```sh
+make module-lua55 \
+    LUA55_DIR=/absolute/path/to/lua-5.5.0 \
+    LUA55_SRC=/absolute/path/to/lua-5.5.0/src \
+    LUA55_LIB=/absolute/path/to/lua-5.5.0/src/liblua.a \
+    LUA55_BUILD_DIR=/absolute/path/to/project-build/luaprof-lua55
+```
+
 This invokes `make linux` in the target Lua directory. If the customized Lua
 uses another build system, move the root Makefile's `$(LUA_MODULE)` source list
 and flags into the project build. The essential requirements are:
 
 - Compile every module object as C11 with `-fPIC` and the target Lua include
   path.
-- Define `LUAPROF_EXPECT_LUA_VERSION=504` for PUC Lua 5.4.8.
+- Define `LUAPROF_EXPECT_LUA_VERSION=504` or `505` for PUC Lua 5.4.8 or 5.5.0.
 - Link the shared module with `-lm -lz -ldl -pthread -lrt`.
 - Keep `lua_*` and `lua_profile_*` references undefined in the module so they
   resolve to the Lua already running in the host. Do not statically put another
