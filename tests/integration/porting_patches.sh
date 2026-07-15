@@ -22,6 +22,14 @@ check_patch() {
         echo "generated patch is empty: $target" >&2
         exit 1
     fi
+    case "$target" in
+    lua54|lua55)
+        if grep -q '^diff --git a/\.gitignore b/\.gitignore$' "$patch_file"; then
+            echo "generated Lua patch contains repository-only .gitignore: $target" >&2
+            exit 1
+        fi
+        ;;
+    esac
     git -C "$source_dir" apply --check --reverse "$patch_file"
 
     rm -f "$patch_file"

@@ -8,7 +8,7 @@
 ## 1. 适用基线
 
 ```text
-baseline: 1097dbe
+baseline: 0b13c63
 target:   3rd/lua-5.5.0 当前 HEAD
 bridge:   LUA_PROFILE_ABI_VERSION == 2
 module:   LUAPROF_EXPECT_LUA_VERSION == 505
@@ -16,6 +16,9 @@ module:   LUAPROF_EXPECT_LUA_VERSION == 505
 
 PUC Lua 5.5 与 Skynet 定制 Lua 都报告版本 505，但不是同一 VM ABI。这里生成的 patch 和
 `build/lua55/luaprof.so` 只用于 PUC Lua 5.5，不能用于 Skynet。
+
+该 baseline 的 Lua 源码与官方 Lua 5.5.0 一致，只额外维护通用 `.gitignore`；生成的
+patch 不包含 `.gitignore`。
 
 ## 2. 生成和应用
 

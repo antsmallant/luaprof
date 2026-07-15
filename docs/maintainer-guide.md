@@ -176,11 +176,12 @@ make test-porting-patches
 make test-feature-gates
 ```
 
-脚本中的 baseline 对应未修改的固定上游版本，只有明确更换或 rebase 基线时才修改；
-target 始终是相应 submodule 的 `HEAD`，不写死 commit。diff 范围是仓库根目录 `-- .`，
-后续新增修改文件也会自动进入 patch。脚本检测到未提交的 tracked 修改会失败，应先在
-独立 fork 完成 commit/push，再更新父仓库 gitlink。脚本不执行 fetch；这里的 `HEAD`
-就是 submodule 当前检出的 commit，不等同于远端分支自动最新值。
+脚本中的 baseline 对应固定 master。Lua fork 的 master 可以包含 `.gitignore` 这类
+非 profiler 仓库维护，但 Lua 源码必须保持对应官方版本；只有明确更换或 rebase 基线时
+才修改。target 始终是相应 submodule 的 `HEAD`，不写死 commit。diff 范围是仓库根目录
+`-- .`，后续新增修改文件也会自动进入 patch。脚本检测到未提交的 tracked 修改会失败，
+应先在独立 fork 完成 commit/push，再更新父仓库 gitlink。脚本不执行 fetch；这里的
+`HEAD` 就是 submodule 当前检出的 commit，不等同于远端分支自动最新值。
 
 ### Skynet Lua 的约束
 

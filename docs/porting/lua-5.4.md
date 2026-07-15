@@ -8,14 +8,15 @@
 ## 1. 适用基线
 
 ```text
-baseline: 46f8c3d
+baseline: ef6de10
 target:   3rd/lua-5.4.8 当前 HEAD
 bridge:   LUA_PROFILE_ABI_VERSION == 2
 module:   LUAPROF_EXPECT_LUA_VERSION == 504
 ```
 
-目标源码与 baseline 内容一致时，可以直接应用完整 patch。目标已经修改过 Lua VM 时，
-必须先执行 dry-run；失败表示需要人工审查冲突。
+该 baseline 的 Lua 源码与官方 Lua 5.4.8 一致，只额外维护通用 `.gitignore`；生成的
+patch 不包含 `.gitignore`。目标已经修改过 Lua VM 时，必须先执行 dry-run；失败表示需要
+人工审查冲突。
 
 ## 2. 生成和应用
 

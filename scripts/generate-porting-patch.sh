@@ -14,11 +14,11 @@ test "$#" -eq 1 || usage
 case "$1" in
 lua54)
     source_dir="$repo_root/3rd/lua-5.4.8"
-    baseline=46f8c3d
+    baseline=ef6de10
     ;;
 lua55)
     source_dir="$repo_root/3rd/lua-5.5.0"
-    baseline=1097dbe
+    baseline=0b13c63
     ;;
 skynet)
     source_dir="$repo_root/integration/skynet"
