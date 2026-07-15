@@ -1,10 +1,15 @@
 # luaprof
 
-`luaprof` 是面向 Lua 的 Linux 采样分析器，支持相互独立的 CPU 和内存 recorder，
-并输出标准 pprof profile。当前支持固定 Lua 5.4.8、Lua 5.5.0 fork 的
-thread-per-VM 宿主，以及使用定制 Lua 5.5 的固定 Skynet fork。
+`luaprof` 是面向 Lua 的 Linux sampling profiler。CPU 与 memory recorder 相互独立，
+结果输出为标准 pprof profile，可以直接使用 `go tool pprof` 分析。
 
-## 构建与测试
+- **CPU**：按线程 CPU time 采样，归因到 Lua 函数、Lua 调用的 CFunction 与 GC。
+- **Memory**：按分配字节随机采样，同时提供 `alloc_*` 与可选的 `inuse_*` 统计。
+- **Host**：支持 thread-per-VM，也支持跟随 service 跨 worker 迁移的 Skynet。
+
+仓库提供 Lua 5.4.8、Lua 5.5.0 和 Skynet 的固定集成版本。
+
+## 快速开始
 
 ```sh
 git clone https://github.com/antsmallant/luaprof.git
@@ -13,84 +18,85 @@ make
 make test
 ```
 
-Lua 5.5 使用独立构建产物和测试入口：
+项目接入与 recorder API 见[接入指南](docs/integration.md)和
+[采样模型与结果解读](docs/profiling-model.md)。
 
-```sh
-make test-lua55
-make example-lua55
-```
+## 效果展示
 
-运行 thread-per-VM 示例：
+以下结果来自仓库示例；sampling 数值会随机器和每次运行略有变化。
+
+### Thread-per-VM CPU
+
+生成 profile 并查看热点：
 
 ```sh
 make example-thread-vm
-```
-
-示例生成：
-
-```text
-build/thread-vm-cpu.pb.gz
-build/thread-vm-heap.pb.gz
-```
-
-查看结果：
-
-```sh
 go tool pprof -top build/thread-vm-cpu.pb.gz
-go tool pprof -lines -top build/thread-vm-cpu.pb.gz
-go tool pprof -sample_index=inuse_space -top build/thread-vm-heap.pb.gz
 ```
-
-## 基本用法
-
-```lua
-local profile = require "luaprof"
-
-local cpu = assert(profile.cpu.start {
-    sample_hz = 100,
-})
-local memory = assert(profile.memory.start {
-    sample_bytes = 512 * 1024,
-    track_free = true,
-})
-
--- workload
-
-local memory_result = assert(memory:stop())
-local cpu_result = assert(cpu:stop())
-
-assert(memory_result:write("heap.pb.gz"))
-assert(cpu_result:write("cpu.pb.gz"))
-```
-
-同一 VM 的 CPU 和 memory recorder 可以独立启动和停止。`track_free = true` 时，memory
-profile 会提供停止时仍存活的 sampled allocation 估算。
-
-## Skynet
-
-构建、测试并运行固定 Skynet fork 的示例：
-
-```sh
-make test-skynet
-make example-skynet
-```
-
-示例生成：
 
 ```text
-build/skynet-cpu.pb.gz
-build/skynet-heap.pb.gz
+File: luaprof
+luaprof CPU sampling profile
+Type: cpu
+Showing nodes accounting for 1.38s, 100% of 1.38s total
+      flat  flat%   sum%        cum   cum%
+     0.66s 47.98% 47.98%      0.66s 47.98%  calculate_orders
+     0.31s 22.25% 70.23%      0.31s 22.25%  tostring [luaB_tostring]
+     0.25s 17.92% 88.15%      0.25s 17.92%  calculate_discounts
+     0.08s  6.07% 94.22%      0.08s  6.07%  [gc]
+     0.04s  3.18% 97.40%      0.10s  7.51%  build_temporary_batches
+     0.02s  1.73% 99.13%      0.34s 24.57%  format_event_labels
+     0.01s  0.87%   100%      0.02s  1.45%  build_retained_cache
 ```
 
-Skynet CPU profile 以调用 `profile.cpu.start()` 的 service 为目标，并在该 service 迁移
-worker 时继续跟踪；它不是整个 Skynet 进程的合并 profile。项目接入方式见下方文档。
+生成调用图：
+
+```sh
+go tool pprof -svg -output=docs/images/thread-vm-cpu.svg \
+  build/thread-vm-cpu.pb.gz
+```
+
+![Thread-per-VM CPU sampling call graph](docs/images/thread-vm-cpu.svg)
+
+### Skynet Memory
+
+生成 profile 并查看停止时仍存活的 sampled allocation：
+
+```sh
+make example-skynet
+go tool pprof -sample_index=inuse_space -top build/skynet-heap.pb.gz
+```
+
+```text
+File: luaprof
+luaprof memory sampling profile
+Type: inuse_space
+Showing nodes accounting for 6117.66kB, 100% of 6117.66kB total
+      flat  flat%   sum%        cum   cum%
+ 5605.49kB 91.63% 91.63%  5605.49kB 91.63%  build_retained_cache
+  512.17kB  8.37%   100%   512.17kB  8.37%  tostring [luaB_tostring]
+         0     0%   100%  6117.66kB   100%  f
+         0     0%   100%   512.17kB  8.37%  format_event_labels
+         0     0%   100%  6117.66kB   100%  init_service
+         0     0%   100%  6117.66kB   100%  lua:./lualib/skynet.lua:1063
+         0     0%   100%  6117.66kB   100%  start
+```
+
+生成调用图：
+
+```sh
+go tool pprof -sample_index=inuse_space -svg \
+  -output=docs/images/skynet-memory-inuse.svg build/skynet-heap.pb.gz
+```
+
+![Skynet in-use memory sampling call graph](docs/images/skynet-memory-inuse.svg)
 
 ## 文档
 
-- [项目接入指南](docs/integration.md)：修改自有 Lua、接入 thread-per-VM 或 Skynet。
-- [采样模型与结果解读](docs/profiling-model.md)：API、CPU/内存语义、pprof、统计项与限制。
-- [维护者指南](docs/maintainer-guide.md)：fork、submodule、双 Lua ABI 和发布流程。
+- [项目接入指南](docs/integration.md)
+- [采样模型与结果解读](docs/profiling-model.md)
+- [维护者指南](docs/maintainer-guide.md)
 
 ## 许可证
 
-本项目使用 [MIT License](LICENSE)。
+[MIT License](LICENSE)
