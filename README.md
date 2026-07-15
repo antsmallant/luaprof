@@ -49,11 +49,13 @@ Showing nodes accounting for 1.38s, 100% of 1.38s total
      0.01s  0.87%   100%      0.02s  1.45%  build_retained_cache
 ```
 
-生成调用图：
+独立查看交互图时可使用 `go tool pprof -svg`。GitHub 不执行其中的
+SVGPan 脚本，因此 README 使用同一份 pprof DOT graph 生成静态 SVG：
 
 ```sh
-go tool pprof -svg -output=docs/images/thread-vm-cpu.svg \
+go tool pprof -dot -output=build/thread-vm-cpu.dot \
   build/thread-vm-cpu.pb.gz
+dot -Tsvg -o docs/images/thread-vm-cpu.svg build/thread-vm-cpu.dot
 ```
 
 ![Thread-per-VM CPU sampling call graph](docs/images/thread-vm-cpu.svg)
@@ -82,11 +84,13 @@ Showing nodes accounting for 6117.66kB, 100% of 6117.66kB total
          0     0%   100%  6117.66kB   100%  start
 ```
 
-生成调用图：
+生成适合 GitHub 预览的静态调用图：
 
 ```sh
-go tool pprof -sample_index=inuse_space -svg \
-  -output=docs/images/skynet-memory-inuse.svg build/skynet-heap.pb.gz
+go tool pprof -sample_index=inuse_space -dot \
+  -output=build/skynet-memory-inuse.dot build/skynet-heap.pb.gz
+dot -Tsvg -o docs/images/skynet-memory-inuse.svg \
+  build/skynet-memory-inuse.dot
 ```
 
 ![Skynet in-use memory sampling call graph](docs/images/skynet-memory-inuse.svg)
