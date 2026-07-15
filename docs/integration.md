@@ -25,7 +25,9 @@ VM 数据结构重新审查，不能视为 ABI 兼容。
 - `luaprof.so` 的头文件和运行时 Lua 来自同一棵源码、同一套 ABI。
 - 一个进程中不要因为 profiler 再静态链接第二份 Lua。
 - Linux 实时信号 `SIGRTMAX - 2` 供 thread-per-VM backend 使用，`SIGRTMAX - 3` 供
-  Skynet backend 使用；安装 profiler timer 前，这些信号必须仍是默认处理方式。
+  Skynet backend 使用；安装 profiler timer 前，这些信号必须仍是默认处理方式，并且在
+  对应 VM/worker 线程中未被屏蔽。luaprof 不会改写宿主的 signal mask，条件不满足时
+  `profile.cpu.start()` 返回 host error。
 - recorder 必须在 `lua_close` 之前停止。
 - VM bridge ABI 必须为 `LUA_PROFILE_ABI_VERSION == 2`。
 
@@ -350,7 +352,7 @@ go tool pprof -sample_index=inuse_space -top heap.pb.gz
 | `undefined symbol: lua_profile_*` | 宿主 Lua 没有 bridge，或者静态 Lua 符号未用 `-Wl,-E` 导出 |
 | 编译时 `unexpected Lua ABI` | module 使用了错误版本的 Lua 头文件或错误的 `LUAPROF_EXPECT_LUA_VERSION` |
 | Skynet CPU profile 的 `scheduler_workers == 0` | host library/hook 未生效，module 错误退回 thread backend |
-| Skynet `cpu.start` 返回 host error | 不在 service dispatch 内、当前 handle 为零、worker 未注册，或并发 recorder 的 `sample_hz` 不一致 |
+| Skynet `cpu.start` 返回 host error | 不在 service dispatch 内、当前 handle 为零、worker 未注册、`SIGRTMAX - 3` 被屏蔽，或并发 recorder 的 `sample_hz` 不一致 |
 | profile 只有地址形式的 CFunction | 可执行文件被 strip、符号未导出，或 Lua 可见绑定扫描不到该函数；不影响 Lua caller stack |
 | memory `inuse_*` 始终为零 | 没有设置 `track_free = true` |
 | 启动 timer 返回 host error | 实时信号已被占用、当前线程已有 recorder，或超过固定 timer/worker 上限 |

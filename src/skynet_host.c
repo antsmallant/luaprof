@@ -2,8 +2,13 @@
 
 #include "luaprof/skynet_host.h"
 
+#if defined(LUAPROF_TESTING)
+#include "skynet_host_test.h"
+#endif
+
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -21,13 +26,21 @@
 enum lp_skynet_target_state {
 	LP_SKYNET_TARGET_FREE = 0,
 	LP_SKYNET_TARGET_ACTIVE = 1,
-	LP_SKYNET_TARGET_STOPPING = 2
+	LP_SKYNET_TARGET_STOPPING = 2,
+	LP_SKYNET_TARGET_RECLAIMING = 3
 };
 
+#define LP_SKYNET_TARGET_STATE_BITS 2u
+#define LP_SKYNET_TARGET_STATE_MASK \
+	((UINT64_C(1) << LP_SKYNET_TARGET_STATE_BITS) - 1u)
+#define LP_SKYNET_TARGET_READER_ONE \
+	(UINT64_C(1) << LP_SKYNET_TARGET_STATE_BITS)
+#define LP_SKYNET_TARGET_ALLOW(state) (1u << (unsigned int)(state))
+
 typedef struct lp_skynet_target {
-	_Atomic int state;
-	uint32_t handle;
-	uint64_t token;
+	_Atomic uint64_t lifecycle;
+	_Atomic uint32_t handle;
+	_Atomic uint64_t token;
 	uint64_t generation;
 	uint32_t sample_hz;
 	lua_State *main_state;
@@ -51,6 +64,8 @@ typedef struct lp_skynet_worker {
 	_Atomic uint64_t slot_version;
 	_Atomic(lp_skynet_target *) slot_target;
 	_Atomic uint64_t slot_token;
+	_Atomic(lp_skynet_target *) slot_quality_target;
+	_Atomic uint64_t slot_quality_token;
 	_Atomic(lua_State *) slot_state;
 	_Atomic(lp_skynet_lua_cfunction) slot_cfunction;
 	_Atomic int slot_vm_state;
@@ -79,6 +94,10 @@ static struct sigaction saved_signal_action;
 static _Thread_local lp_skynet_worker *current_worker;
 static _Thread_local uint32_t current_handle;
 
+#if defined(LUAPROF_TESTING)
+static _Thread_local bool inject_transition_tick;
+#endif
+
 static uint64_t
 saturating_add(uint64_t value, uint64_t increment) {
 	return UINT64_MAX - value < increment ? UINT64_MAX : value + increment;
@@ -93,6 +112,81 @@ add_quality(_Atomic uint64_t *counter, uint64_t value) {
 			memory_order_relaxed, memory_order_relaxed)) {
 			return;
 		}
+	}
+}
+
+static int
+target_state(uint64_t lifecycle) {
+	return (int)(lifecycle & LP_SKYNET_TARGET_STATE_MASK);
+}
+
+static int
+target_current_state(const lp_skynet_target *target) {
+	return target_state(atomic_load_explicit(&target->lifecycle,
+		memory_order_acquire));
+}
+
+static uint32_t
+target_handle(const lp_skynet_target *target) {
+	return atomic_load_explicit(&target->handle, memory_order_relaxed);
+}
+
+static uint64_t
+target_token(const lp_skynet_target *target) {
+	return atomic_load_explicit(&target->token, memory_order_relaxed);
+}
+
+/* State and reader count share one CAS word so reclaim cannot miss a late pin. */
+static bool
+target_pin(lp_skynet_target *target, unsigned int allowed_states,
+	int *pinned_state) {
+	uint64_t old = atomic_load_explicit(&target->lifecycle,
+		memory_order_acquire);
+	for (;;) {
+		int state = target_state(old);
+		if ((allowed_states & LP_SKYNET_TARGET_ALLOW(state)) == 0 ||
+			old > UINT64_MAX - LP_SKYNET_TARGET_READER_ONE) {
+			return false;
+		}
+		if (atomic_compare_exchange_weak_explicit(&target->lifecycle, &old,
+			old + LP_SKYNET_TARGET_READER_ONE, memory_order_acquire,
+			memory_order_relaxed)) {
+			if (pinned_state != NULL) {
+				*pinned_state = state;
+			}
+			return true;
+		}
+	}
+}
+
+static void
+target_unpin(lp_skynet_target *target) {
+	(void)atomic_fetch_sub_explicit(&target->lifecycle,
+		LP_SKYNET_TARGET_READER_ONE, memory_order_release);
+}
+
+static bool
+target_transition(lp_skynet_target *target, int from, int to) {
+	uint64_t old = atomic_load_explicit(&target->lifecycle,
+		memory_order_relaxed);
+	for (;;) {
+		if (target_state(old) != from) {
+			return false;
+		}
+		uint64_t next = (old & ~LP_SKYNET_TARGET_STATE_MASK) |
+			(uint64_t)to;
+		if (atomic_compare_exchange_weak_explicit(&target->lifecycle, &old,
+			next, memory_order_acq_rel, memory_order_relaxed)) {
+			return true;
+		}
+	}
+}
+
+static void
+target_wait_unpinned(const lp_skynet_target *target) {
+	while ((atomic_load_explicit(&target->lifecycle,
+		memory_order_acquire) & ~LP_SKYNET_TARGET_STATE_MASK) != 0) {
+		(void)sched_yield();
 	}
 }
 
@@ -113,6 +207,30 @@ registered_worker(lp_skynet_worker *worker) {
 	return false;
 }
 
+static bool
+target_pin_session(lp_skynet_target *target, uint64_t token,
+	unsigned int allowed_states, int *pinned_state) {
+	if (target == NULL || !target_pin(target, allowed_states, pinned_state)) {
+		return false;
+	}
+	if (target_token(target) != token) {
+		target_unpin(target);
+		return false;
+	}
+	return true;
+}
+
+static void
+record_slot_unstable(lp_skynet_target *target, uint64_t token,
+	unsigned int weight) {
+	if (target_pin_session(target, token,
+		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE) |
+		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_STOPPING), NULL)) {
+		add_quality(&target->unstable, weight);
+		target_unpin(target);
+	}
+}
+
 static void
 timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	(void)signal_number;
@@ -131,9 +249,14 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	}
 
 	unsigned int weight = event_weight(info);
+	lp_skynet_target *quality_target = atomic_load_explicit(
+		&worker->slot_quality_target, memory_order_acquire);
+	uint64_t quality_token = atomic_load_explicit(&worker->slot_quality_token,
+		memory_order_relaxed);
 	uint64_t version = atomic_load_explicit(&worker->slot_version,
 		memory_order_acquire);
 	if ((version & 1u) != 0) {
+		record_slot_unstable(quality_target, quality_token, weight);
 		errno = saved_errno;
 		return;
 	}
@@ -149,9 +272,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		memory_order_relaxed);
 	if (version != atomic_load_explicit(&worker->slot_version,
 		memory_order_acquire)) {
-		if (target != NULL) {
-			add_quality(&target->unstable, weight);
-		}
+		record_slot_unstable(quality_target, quality_token, weight);
 		errno = saved_errno;
 		return;
 	}
@@ -159,20 +280,29 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		errno = saved_errno;
 		return;
 	}
-	if (atomic_load_explicit(&target->state, memory_order_acquire) !=
-		LP_SKYNET_TARGET_ACTIVE || target->token != token) {
+	int pinned_state;
+	if (!target_pin_session(target, token,
+		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE) |
+		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_STOPPING), &pinned_state)) {
+		errno = saved_errno;
+		return;
+	}
+	if (pinned_state != LP_SKYNET_TARGET_ACTIVE) {
 		add_quality(&target->stale, weight);
+		target_unpin(target);
 		errno = saved_errno;
 		return;
 	}
 	if (atomic_load_explicit(&target->draining_events, memory_order_acquire)) {
 		add_quality(&target->profiler_overhead, weight);
+		target_unpin(target);
 		errno = saved_errno;
 		return;
 	}
 	if (vm_state < 0 || vm_state > 3 ||
 		(vm_state == 2 && cfunction == NULL)) {
 		add_quality(&target->unstable, weight);
+		target_unpin(target);
 		errno = saved_errno;
 		return;
 	}
@@ -200,6 +330,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 			memory_order_release);
 		lua_profile_request(L, weight);
 	}
+	target_unpin(target);
 	errno = saved_errno;
 }
 
@@ -279,6 +410,16 @@ publish_slot(lp_skynet_worker *worker, lp_skynet_target *target,
 	}
 	atomic_fetch_add_explicit(&worker->slot_version, 1,
 		memory_order_acq_rel);
+#if defined(LUAPROF_TESTING)
+	if (inject_transition_tick) {
+		inject_transition_tick = false;
+		siginfo_t info;
+		memset(&info, 0, sizeof(info));
+		info.si_code = SI_TIMER;
+		info.si_value.sival_ptr = worker;
+		timer_signal_handler(host_signal, &info, NULL);
+	}
+#endif
 	atomic_store_explicit(&worker->slot_target, target,
 		memory_order_relaxed);
 	atomic_store_explicit(&worker->slot_token, token,
@@ -291,7 +432,19 @@ publish_slot(lp_skynet_worker *worker, lp_skynet_target *target,
 		memory_order_relaxed);
 	atomic_fetch_add_explicit(&worker->slot_version, 1,
 		memory_order_release);
+	/* The old owner remains visible for the complete odd-version window. */
+	atomic_store_explicit(&worker->slot_quality_token, token,
+		memory_order_relaxed);
+	atomic_store_explicit(&worker->slot_quality_target, target,
+		memory_order_release);
 }
+
+#if defined(LUAPROF_TESTING)
+void
+lp_skynet_host_test_inject_transition_tick(void) {
+	inject_transition_tick = true;
+}
+#endif
 
 static bool
 block_worker_signal(sigset_t *set, sigset_t *previous) {
@@ -305,18 +458,24 @@ block_worker_signal(sigset_t *set, sigset_t *previous) {
 
 static void
 discard_pending(lp_skynet_worker *worker, const sigset_t *set,
-	lp_skynet_target *target) {
+	lp_skynet_target *target, uint64_t token) {
+	bool pinned = target_pin_session(target, token,
+		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE) |
+		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_STOPPING), NULL);
 	for (;;) {
 		struct timespec no_wait = { 0, 0 };
 		siginfo_t info;
 		int received = sigtimedwait(set, &info, &no_wait);
 		if (received != host_signal) {
-			return;
+			break;
 		}
 		if (info.si_code == SI_TIMER &&
-			info.si_value.sival_ptr == worker && target != NULL) {
+			info.si_value.sival_ptr == worker && pinned) {
 			add_quality(&target->stale, event_weight(&info));
 		}
+	}
+	if (pinned) {
+		target_unpin(target);
 	}
 }
 
@@ -359,36 +518,53 @@ sync_worker_timer(lp_skynet_worker *worker) {
 }
 
 static lp_skynet_target *
-find_active_handle(uint32_t handle) {
+pin_active_handle(uint32_t handle) {
 	for (size_t i = 0; i < LP_SKYNET_TARGET_CAPACITY; ++i) {
 		lp_skynet_target *target = &targets[i];
-		if (atomic_load_explicit(&target->state,
-			memory_order_acquire) == LP_SKYNET_TARGET_ACTIVE &&
-			target->handle == handle) {
+		if (target_current_state(target) != LP_SKYNET_TARGET_ACTIVE ||
+			target_handle(target) != handle) {
+			continue;
+		}
+		if (!target_pin(target,
+			LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE), NULL)) {
+			continue;
+		}
+		if (target_handle(target) == handle) {
 			return target;
 		}
+		target_unpin(target);
 	}
 	return NULL;
 }
 
 static lp_skynet_target *
-find_token(uint64_t token, bool allow_stopping) {
+pin_token(uint64_t token, bool allow_stopping) {
+	unsigned int allowed = LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE);
+	if (allow_stopping) {
+		allowed |= LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_STOPPING);
+	}
 	for (size_t i = 0; i < LP_SKYNET_TARGET_CAPACITY; ++i) {
 		lp_skynet_target *target = &targets[i];
-		int state = atomic_load_explicit(&target->state,
-			memory_order_acquire);
-		if ((state == LP_SKYNET_TARGET_ACTIVE ||
-			(allow_stopping && state == LP_SKYNET_TARGET_STOPPING)) &&
-			target->token == token) {
+		int state = target_current_state(target);
+		if ((allowed & LP_SKYNET_TARGET_ALLOW(state)) == 0 ||
+			target_token(target) != token) {
+			continue;
+		}
+		if (!target_pin(target, allowed, NULL)) {
+			continue;
+		}
+		if (target_token(target) == token) {
 			return target;
 		}
+		target_unpin(target);
 	}
 	return NULL;
 }
 
 void
 lp_skynet_host_worker_start(unsigned int worker_id) {
-	if (current_worker != NULL) {
+	if (current_worker != NULL ||
+		atomic_load_explicit(&host_failed, memory_order_acquire)) {
 		return;
 	}
 	lp_skynet_worker *worker = calloc(1, sizeof(*worker));
@@ -400,6 +576,14 @@ lp_skynet_host_worker_start(unsigned int worker_id) {
 	worker->signal_slot = -1;
 	atomic_init(&worker->slot_vm_state, 0);
 	if (acquire_signal(worker) != 0) {
+		free(worker);
+		atomic_store_explicit(&host_failed, true, memory_order_release);
+		return;
+	}
+	sigset_t current_mask;
+	if (pthread_sigmask(SIG_SETMASK, NULL, &current_mask) != 0 ||
+		sigismember(&current_mask, host_signal) != 0) {
+		release_signal(worker);
 		free(worker);
 		atomic_store_explicit(&host_failed, true, memory_order_release);
 		return;
@@ -464,20 +648,23 @@ lp_skynet_host_dispatch_enter(uint32_t handle) {
 	bool blocked = block_worker_signal(&set, &previous);
 	lp_skynet_target *previous_target = atomic_load_explicit(
 		&current_worker->slot_target, memory_order_acquire);
+	uint64_t previous_token = atomic_load_explicit(
+		&current_worker->slot_token, memory_order_relaxed);
 	publish_slot(current_worker, NULL, 0, NULL, 0, NULL);
 	if (blocked) {
-		discard_pending(current_worker, &set, previous_target);
+		discard_pending(current_worker, &set, previous_target, previous_token);
 	}
 	sync_worker_timer(current_worker);
-	lp_skynet_target *target = find_active_handle(handle);
+	lp_skynet_target *target = pin_active_handle(handle);
 	if (target == NULL) {
 		if (blocked) {
 			(void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
 		}
 		return;
 	}
-	publish_slot(current_worker, target, target->token, target->main_state,
+	publish_slot(current_worker, target, target_token(target), target->main_state,
 		0, NULL);
+	target_unpin(target);
 	if (blocked) {
 		(void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
 	}
@@ -491,9 +678,11 @@ lp_skynet_host_dispatch_leave(void) {
 		bool blocked = block_worker_signal(&set, &previous);
 		lp_skynet_target *target = atomic_load_explicit(
 			&current_worker->slot_target, memory_order_acquire);
+		uint64_t token = atomic_load_explicit(&current_worker->slot_token,
+			memory_order_relaxed);
 		publish_slot(current_worker, NULL, 0, NULL, 0, NULL);
 		if (blocked) {
-			discard_pending(current_worker, &set, target);
+			discard_pending(current_worker, &set, target, token);
 		}
 		sync_worker_timer(current_worker);
 		if (blocked) {
@@ -529,14 +718,15 @@ api_target_start(uint32_t handle, lua_State *main_state,
 		return -1;
 	}
 	for (size_t i = 0; i < LP_SKYNET_TARGET_CAPACITY; ++i) {
-		int state = atomic_load_explicit(&targets[i].state,
+		uint64_t lifecycle = atomic_load_explicit(&targets[i].lifecycle,
 			memory_order_relaxed);
+		int state = target_state(lifecycle);
 		if (state != LP_SKYNET_TARGET_FREE &&
-			targets[i].handle == handle) {
+			target_handle(&targets[i]) == handle) {
 			pthread_mutex_unlock(&host_lock);
 			return -1;
 		}
-		if (selected == NULL && state == LP_SKYNET_TARGET_FREE) {
+		if (selected == NULL && lifecycle == LP_SKYNET_TARGET_FREE) {
 			selected = &targets[i];
 		}
 	}
@@ -554,8 +744,9 @@ api_target_start(uint32_t handle, lua_State *main_state,
 	if (selected_token == 0) {
 		selected_token = ++next_token;
 	}
-	selected->handle = handle;
-	selected->token = selected_token;
+	atomic_store_explicit(&selected->handle, handle, memory_order_relaxed);
+	atomic_store_explicit(&selected->token, selected_token,
+		memory_order_relaxed);
 	selected->generation = generation;
 	selected->sample_hz = sample_hz;
 	selected->main_state = main_state;
@@ -572,8 +763,13 @@ api_target_start(uint32_t handle, lua_State *main_state,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->draining_events, false,
 		memory_order_relaxed);
-	atomic_store_explicit(&selected->state, LP_SKYNET_TARGET_ACTIVE,
-		memory_order_release);
+	if (!target_transition(selected, LP_SKYNET_TARGET_FREE,
+		LP_SKYNET_TARGET_ACTIVE)) {
+		free(selected->events);
+		selected->events = NULL;
+		pthread_mutex_unlock(&host_lock);
+		return -1;
+	}
 	atomic_store_explicit(&active_sample_hz, sample_hz,
 		memory_order_release);
 	atomic_store_explicit(&active_targets, count + 1,
@@ -583,9 +779,13 @@ api_target_start(uint32_t handle, lua_State *main_state,
 	sigset_t set;
 	sigset_t previous;
 	bool blocked = block_worker_signal(&set, &previous);
+	lp_skynet_target *previous_target = atomic_load_explicit(
+		&current_worker->slot_target, memory_order_acquire);
+	uint64_t previous_token = atomic_load_explicit(
+		&current_worker->slot_token, memory_order_relaxed);
 	publish_slot(current_worker, NULL, 0, NULL, 0, NULL);
 	if (blocked) {
-		discard_pending(current_worker, &set, selected);
+		discard_pending(current_worker, &set, previous_target, previous_token);
 	}
 	sync_worker_timer(current_worker);
 	publish_slot(current_worker, selected, selected_token, main_state, 0,
@@ -602,9 +802,8 @@ api_target_quiesce(uint64_t token) {
 	lp_skynet_target *target = NULL;
 	pthread_mutex_lock(&host_lock);
 	for (size_t i = 0; i < LP_SKYNET_TARGET_CAPACITY; ++i) {
-		if (atomic_load_explicit(&targets[i].state,
-			memory_order_relaxed) == LP_SKYNET_TARGET_ACTIVE &&
-			targets[i].token == token) {
+		if (target_current_state(&targets[i]) == LP_SKYNET_TARGET_ACTIVE &&
+			target_token(&targets[i]) == token) {
 			target = &targets[i];
 			break;
 		}
@@ -613,8 +812,11 @@ api_target_quiesce(uint64_t token) {
 		pthread_mutex_unlock(&host_lock);
 		return -1;
 	}
-	atomic_store_explicit(&target->state, LP_SKYNET_TARGET_STOPPING,
-		memory_order_release);
+	if (!target_transition(target, LP_SKYNET_TARGET_ACTIVE,
+		LP_SKYNET_TARGET_STOPPING)) {
+		pthread_mutex_unlock(&host_lock);
+		return -1;
+	}
 	unsigned int count = atomic_load_explicit(&active_targets,
 		memory_order_relaxed);
 	if (count > 0) {
@@ -637,13 +839,15 @@ api_target_quiesce(uint64_t token) {
 			publish_slot(current_worker, NULL, 0, NULL, 0, NULL);
 		}
 		if (blocked) {
-			discard_pending(current_worker, &set, target);
+			discard_pending(current_worker, &set, target, token);
 		}
 	}
 	sync_worker_timer(current_worker);
 	if (blocked) {
 		(void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
 	}
+	/* Readers pinned before STOPPING must publish their event before drain. */
+	target_wait_unpinned(target);
 	return 0;
 }
 
@@ -652,23 +856,28 @@ api_target_release(uint64_t token) {
 	pthread_mutex_lock(&host_lock);
 	lp_skynet_target *target = NULL;
 	for (size_t i = 0; i < LP_SKYNET_TARGET_CAPACITY; ++i) {
-		if (atomic_load_explicit(&targets[i].state,
-			memory_order_relaxed) == LP_SKYNET_TARGET_STOPPING &&
-			targets[i].token == token) {
+		if (target_current_state(&targets[i]) == LP_SKYNET_TARGET_STOPPING &&
+			target_token(&targets[i]) == token) {
 			target = &targets[i];
 			break;
 		}
 	}
 	if (target != NULL) {
+		if (!target_transition(target, LP_SKYNET_TARGET_STOPPING,
+			LP_SKYNET_TARGET_RECLAIMING)) {
+			pthread_mutex_unlock(&host_lock);
+			return;
+		}
+		target_wait_unpinned(target);
 		free(target->events);
 		target->events = NULL;
-		target->handle = 0;
-		target->token = 0;
+		atomic_store_explicit(&target->handle, 0, memory_order_relaxed);
+		atomic_store_explicit(&target->token, 0, memory_order_relaxed);
 		target->generation = 0;
 		target->sample_hz = 0;
 		target->main_state = NULL;
-		atomic_store_explicit(&target->state, LP_SKYNET_TARGET_FREE,
-			memory_order_release);
+		(void)target_transition(target, LP_SKYNET_TARGET_RECLAIMING,
+			LP_SKYNET_TARGET_FREE);
 	}
 	pthread_mutex_unlock(&host_lock);
 }
@@ -676,36 +885,45 @@ api_target_release(uint64_t token) {
 static void
 api_publish_state(uint64_t token, lua_State *state, int vm_state,
 	lp_skynet_lua_cfunction cfunction) {
-	lp_skynet_target *target = find_token(token, false);
+	lp_skynet_target *target = pin_token(token, false);
 	if (target == NULL || current_worker == NULL ||
-		current_handle != target->handle) {
+		current_handle != target_handle(target)) {
+		if (target != NULL) {
+			target_unpin(target);
+		}
 		return;
 	}
 	publish_slot(current_worker, target, token, state, vm_state, cfunction);
+	target_unpin(target);
 }
 
 static void
 api_begin_event_drain(uint64_t token) {
-	lp_skynet_target *target = find_token(token, true);
+	lp_skynet_target *target = pin_token(token, true);
 	if (target != NULL) {
 		atomic_store_explicit(&target->draining_events, true,
 			memory_order_release);
+		target_unpin(target);
 	}
 }
 
 static void
 api_end_event_drain(uint64_t token) {
-	lp_skynet_target *target = find_token(token, true);
+	lp_skynet_target *target = pin_token(token, true);
 	if (target != NULL) {
 		atomic_store_explicit(&target->draining_events, false,
 			memory_order_release);
+		target_unpin(target);
 	}
 }
 
 static bool
 api_next_event(uint64_t token, lp_skynet_tick_event *event) {
-	lp_skynet_target *target = find_token(token, true);
+	lp_skynet_target *target = pin_token(token, true);
 	if (target == NULL || event == NULL) {
+		if (target != NULL) {
+			target_unpin(target);
+		}
 		return false;
 	}
 	uint64_t read = atomic_load_explicit(&target->read_sequence,
@@ -713,11 +931,13 @@ api_next_event(uint64_t token, lp_skynet_tick_event *event) {
 	uint64_t write = atomic_load_explicit(&target->write_sequence,
 		memory_order_acquire);
 	if (read == write) {
+		target_unpin(target);
 		return false;
 	}
 	*event = target->events[read & (LP_SKYNET_RING_CAPACITY - 1u)];
 	atomic_store_explicit(&target->read_sequence, read + 1,
 		memory_order_release);
+	target_unpin(target);
 	return true;
 }
 
@@ -727,7 +947,7 @@ api_take_quality(uint64_t token, lp_skynet_quality *quality) {
 		return;
 	}
 	memset(quality, 0, sizeof(*quality));
-	lp_skynet_target *target = find_token(token, true);
+	lp_skynet_target *target = pin_token(token, true);
 	if (target == NULL) {
 		return;
 	}
@@ -741,6 +961,7 @@ api_take_quality(uint64_t token, lp_skynet_quality *quality) {
 		memory_order_relaxed);
 	quality->worker_mask = atomic_load_explicit(&target->worker_mask,
 		memory_order_relaxed);
+	target_unpin(target);
 }
 
 const lp_skynet_host_api *

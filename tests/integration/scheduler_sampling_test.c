@@ -3,10 +3,13 @@
 #include "lua_bridge.h"
 #include "luaprof/runtime.h"
 #include "luaprof/skynet_host.h"
+#include "skynet_host_test.h"
 
 #include <assert.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +21,9 @@
 
 #define TARGET_HANDLE UINT32_C(0x100)
 #define OTHER_HANDLE UINT32_C(0x200)
+#define TRANSITION_HANDLE UINT32_C(0x500)
+#define REUSE_HANDLE UINT32_C(0x600)
+#define REUSE_ROUNDS 1000u
 
 typedef struct scheduler_test {
 	lua_State *L;
@@ -32,6 +38,12 @@ typedef struct concurrent_test {
 	uint32_t handle;
 	unsigned int worker_id;
 } concurrent_test;
+
+typedef struct reuse_test {
+	scheduler_test target;
+	pthread_barrier_t barrier;
+	_Atomic bool done;
+} reuse_test;
 
 static void
 run_chunk(lua_State *L, const char *source, const char *name) {
@@ -231,11 +243,109 @@ test_destroy_active_runtime(void) {
 	close_test(&test);
 }
 
+static void *
+transition_tick_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(5);
+	lp_skynet_host_dispatch_enter(TRANSITION_HANDLE);
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1000 },
+	};
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_OK);
+	lp_skynet_host_test_inject_transition_tick();
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_dispatch_enter(TRANSITION_HANDLE);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_transition_tick_accounting(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, transition_tick_worker, &test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(test.result.stats.unstable_events >= 1);
+	close_test(&test);
+}
+
+static void
+wait_reuse_barrier(pthread_barrier_t *barrier) {
+	int status = pthread_barrier_wait(barrier);
+	assert(status == 0 || status == PTHREAD_BARRIER_SERIAL_THREAD);
+}
+
+static void *
+reuse_owner_worker(void *argument) {
+	reuse_test *test = argument;
+	lp_skynet_host_worker_start(6);
+	wait_reuse_barrier(&test->barrier);
+	for (unsigned int i = 0; i < REUSE_ROUNDS; ++i) {
+		lp_skynet_host_dispatch_enter(REUSE_HANDLE);
+		lp_collector_config config = {
+			.kind = LP_COLLECTOR_CPU,
+			.value.cpu = { .sample_hz = 1000 },
+		};
+		uint64_t generation = 0;
+		assert(lp_runtime_start(test->target.runtime, test->target.L, &config,
+			&generation) == LP_OK);
+		lp_result result = { 0 };
+		assert(lp_runtime_stop(test->target.runtime, test->target.L,
+			LP_COLLECTOR_CPU, generation, &result) == LP_OK);
+		lp_result_dispose(&result);
+		lp_skynet_host_dispatch_leave();
+	}
+	atomic_store_explicit(&test->done, true, memory_order_release);
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void *
+reuse_scanner_worker(void *argument) {
+	reuse_test *test = argument;
+	lp_skynet_host_worker_start(7);
+	wait_reuse_barrier(&test->barrier);
+	uint32_t sequence = 0;
+	while (!atomic_load_explicit(&test->done, memory_order_acquire)) {
+		lp_skynet_host_dispatch_enter(OTHER_HANDLE + (sequence++ & 255u));
+		lp_skynet_host_dispatch_leave();
+		if ((sequence & 255u) == 0) {
+			(void)sched_yield();
+		}
+	}
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_target_reuse_with_concurrent_dispatch(void) {
+	reuse_test test;
+	memset(&test, 0, sizeof(test));
+	open_test(&test.target);
+	assert(pthread_barrier_init(&test.barrier, NULL, 2) == 0);
+	pthread_t owner;
+	pthread_t scanner;
+	assert(pthread_create(&owner, NULL, reuse_owner_worker, &test) == 0);
+	assert(pthread_create(&scanner, NULL, reuse_scanner_worker, &test) == 0);
+	assert(pthread_join(owner, NULL) == 0);
+	assert(pthread_join(scanner, NULL) == 0);
+	assert(pthread_barrier_destroy(&test.barrier) == 0);
+	close_test(&test.target);
+}
+
 int
 main(void) {
 	test_migration();
 	test_concurrent_targets();
 	test_destroy_active_runtime();
+	test_transition_tick_accounting();
+	test_target_reuse_with_concurrent_dispatch();
 	puts("luaprof scheduler CPU sampling: ok");
 	return EXIT_SUCCESS;
 }
