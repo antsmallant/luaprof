@@ -7,7 +7,10 @@
 - **Memory**：按分配字节随机采样，同时提供 `alloc_*` 与可选的 `inuse_*` 统计。
 - **Host**：支持 thread-per-VM，也支持跟随 service 跨 worker 迁移的 Skynet。
 
-仓库提供 Lua 5.4.8、Lua 5.5.0 和 Skynet 的固定集成版本。
+`luaprof` 需要在 Lua VM 内加入少量 bridge 代码，用于发布 VM 状态、在安全点
+采集调用栈和捕获内存分配事件。仓库提供 Lua 5.4.8、Lua 5.5.0 和
+Skynet 的固定集成版本；使用其他 Lua 5.4/5.5 版本或定制 Skynet 时，可按
+[接入指南](docs/integration.md)生成对应 patch，并结合自己的 VM 改动完成移植和验证。
 
 ## 快速开始
 
