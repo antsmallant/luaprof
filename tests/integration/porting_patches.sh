@@ -23,7 +23,7 @@ check_patch() {
         exit 1
     fi
     case "$target" in
-    lua54|lua55)
+    lua46|lua54|lua55)
         if grep -q '^diff --git a/\.gitignore b/\.gitignore$' "$patch_file"; then
             echo "generated Lua patch contains repository-only .gitignore: $target" >&2
             exit 1
@@ -37,6 +37,7 @@ check_patch() {
     echo "porting patch $target: ok"
 }
 
+check_patch lua46 "$repo_root/3rd/lua-5.4.6"
 check_patch lua54 "$repo_root/3rd/lua-5.4.8"
 check_patch lua55 "$repo_root/3rd/lua-5.5.0"
 check_patch skynet "$repo_root/integration/skynet"

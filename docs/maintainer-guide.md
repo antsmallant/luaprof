@@ -7,10 +7,11 @@
 
 ## 1. 仓库与构建边界
 
-父仓库固定三个直接 submodule：
+父仓库固定四个直接 submodule：
 
 | Path | Remote branch | 用途 |
 | --- | --- | --- |
+| `3rd/lua-5.4.6` | `lua-5.4.6.git` 的 `luaprof` | thread-per-VM Lua 5.4.6 |
 | `3rd/lua-5.4.8` | `lua-5.4.8.git` 的 `luaprof` | thread-per-VM Lua 5.4.8 |
 | `3rd/lua-5.5.0` | `lua-5.5.0.git` 的 `luaprof` | thread-per-VM Lua 5.5.0 |
 | `integration/skynet` | `skynet.git` 的 `luaprof` | Skynet host 及其定制 Lua 5.5 |
@@ -19,30 +20,31 @@
 `git submodule update --remote`；普通 `make`、CI 和使用者 checkout 都按照父仓库 gitlink
 固定准确 commit，不自动跟随远端分支。
 
-三个 Lua build boundary 使用不同 module：
+四个 Lua build boundary 使用不同 module：
 
 ```text
+build/lua46/luaprof.so    PUC Lua 5.4.6
 build/luaprof.so          PUC Lua 5.4.8
 build/lua55/luaprof.so    PUC Lua 5.5.0
 build/skynet/luaprof.so   Skynet customized Lua 5.5
 ```
 
-构建时分别定义 `LUAPROF_EXPECT_LUA_VERSION=504` 和 `505`。即使 PUC Lua 5.5 与 Skynet
-Lua 都报告 505，它们仍是不同 VM ABI，不能互换 module，也不能把另一份 `liblua.a`
-静态链接进 module。
+构建时 Lua 5.4.6/5.4.8 定义 `LUAPROF_EXPECT_LUA_VERSION=504`，PUC Lua 5.5 与
+Skynet Lua 定义 `505`。即使版本号相同，不同源码树仍不能互换 module，也不能把另一份
+`liblua.a` 静态链接进 module。
 
 当前 ABI contract：
 
 - Lua VM bridge：`LUA_PROFILE_ABI_VERSION == 2`
 - Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 1`
 
-三个 fork 的 profiling 功能默认关闭。Lua fork 使用 `LUAPROF=1` 定义
+四个 fork 的 profiling 功能默认关闭。Lua fork 使用 `LUAPROF=1` 定义
 `LUA_USE_LUAPROF`；Skynet 的同名 Make 变量还会启用 `SKYNET_LUAPROF` 并链接 host
 library。父仓库所有 VM/module target 都显式启用，不依赖 fork 的默认值。修改 feature gate
 时必须同时验证普通 macro-off 构建和父项目 macro-on 构建；切换模式前要 clean rebuild。
 
-修改公开结构、callback 语义或 symbol contract 时，必须评估并更新 ABI version、两棵
-Lua fork、module 和 contract test。
+修改公开结构、callback 语义或 symbol contract 时，必须评估并更新 ABI version、三棵
+PUC Lua fork、Skynet 内嵌 Lua、module 和 contract test。
 
 ## 2. 公开 checkout
 
@@ -52,17 +54,17 @@ Lua fork、module 和 contract test。
 git clone https://github.com/antsmallant/luaprof.git
 cd luaprof
 git submodule update --init \
-    3rd/lua-5.4.8 3rd/lua-5.5.0 integration/skynet
+    3rd/lua-5.4.6 3rd/lua-5.4.8 3rd/lua-5.5.0 integration/skynet
 ```
 
-`make` 默认只初始化 Lua submodule。只有显式 Skynet target 才初始化 Skynet 及其直接
-依赖，避免普通构建下载无关的嵌套 submodule。
+`make` 默认只初始化 Lua 5.4.8 submodule。其他版本和 Skynet 只由各自显式 target
+初始化，避免普通构建下载无关依赖。
 
 变更 `.gitmodules` 后执行：
 
 ```sh
 git submodule sync -- \
-    3rd/lua-5.4.8 3rd/lua-5.5.0 integration/skynet
+    3rd/lua-5.4.6 3rd/lua-5.4.8 3rd/lua-5.5.0 integration/skynet
 ```
 
 提交前应在干净目录从公开 URL 重新 clone 并执行一次 direct-submodule 初始化，防止
@@ -75,6 +77,8 @@ checkout：
 
 ```sh
 git clone --branch luaprof \
+    https://github.com/antsmallant/lua-5.4.6.git ../lua-5.4.6
+git clone --branch luaprof \
     https://github.com/antsmallant/lua-5.4.8.git ../lua-5.4.8
 git clone --branch luaprof \
     https://github.com/antsmallant/lua-5.5.0.git ../lua-5.5.0
@@ -85,6 +89,8 @@ git clone --branch luaprof \
 需要通过 SSH 推送时，只修改独立 checkout 的 push URL，不改变公开 fetch URL：
 
 ```sh
+git -C ../lua-5.4.6 remote set-url --push origin \
+    git@github.com:antsmallant/lua-5.4.6.git
 git -C ../lua-5.4.8 remote set-url --push origin \
     git@github.com:antsmallant/lua-5.4.8.git
 git -C ../lua-5.5.0 remote set-url --push origin \
@@ -93,7 +99,7 @@ git -C ../skynet remote set-url --push origin \
     git@github.com:antsmallant/skynet.git
 ```
 
-三个公开 `luaprof` 分支都保持同一历史形态：对应 `origin/master` 加一个 luaprof
+四个公开 `luaprof` 分支都保持同一历史形态：对应 `origin/master` 加一个 luaprof
 提交。Lua fork 的提交 message 为 `feat: luaprof VM bridge`，Skynet 为
 `feat: luaprof integration`。本地开发可以使用临时提交，但发布前必须压回单个提交，不能
 把实现过程中的修复提交逐个留在公开 fork 历史中。
@@ -113,7 +119,17 @@ fork 的标准流程：
 
 ## 4. 更新父仓库 gitlink
 
-Lua fork：
+Lua 5.4.6 fork：
+
+```sh
+git submodule update --remote 3rd/lua-5.4.6
+git diff --submodule=log -- 3rd/lua-5.4.6
+git add 3rd/lua-5.4.6
+make test-lua46
+git commit -m "build: update Lua 5.4.6 submodule"
+```
+
+默认 Lua 5.4.8 fork：
 
 ```sh
 git submodule update --remote 3rd/lua-5.4.8
@@ -169,6 +185,7 @@ Skynet 自带的 `3rd/lua`，并分别运行对应 bridge test。
 提交 fork 并更新父仓库 submodule 后，用当前 `HEAD` 生成对外移植 patch：
 
 ```sh
+./scripts/generate-porting-patch.sh lua46 > /tmp/luaprof-lua46.patch
 ./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
 ./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
 ./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
@@ -185,7 +202,7 @@ make test-feature-gates
 
 ### Skynet Lua 的约束
 
-Skynet profiling 修改属于 Skynet fork 本身。不要用父项目 Lua 5.4.8 替换
+Skynet profiling 修改属于 Skynet fork 本身。不要用父项目中的任何 PUC Lua fork 替换
 `integration/skynet/3rd/lua`，也不要向 Skynet build 传入父项目 `LUA_INC`/`LUA_LIB`。
 
 移植时必须保留：
@@ -213,6 +230,11 @@ shutdown 和 active-runtime destruction。host 与 module 的 symbol 边界检�
 普通 Lua：
 
 ```sh
+make test-lua46
+make example-lua46
+make bench-lua46-vm
+make bench-lua46-combined
+
 make test
 make example-thread-vm
 make bench-vm
@@ -247,12 +269,12 @@ sample index，并检查 drop、truncation 和 overflow 计数。
 
 - README 保持面向首次使用，不放入本机路径和内部工作流。
 - `.gitmodules` 只使用公开 HTTPS fetch URL。
-- 三个 gitlink commit 已经推送到各自 `luaprof` 分支。
+- 四个 gitlink commit 已经推送到各自 `luaprof` 分支。
 - README 和 docs 入口有效。
-- 三个 module 使用正确 Lua ABI，且没有静态包含另一份 Lua。
-- `make test`、`make test-lua55` 和 `make test-skynet` 通过。
+- 四个 module 使用正确 Lua ABI，且没有静态包含另一份 Lua。
+- `make test`、`make test-lua46`、`make test-lua55` 和 `make test-skynet` 通过。
 - thread-per-VM 与 Skynet 示例能生成可由标准 `go tool pprof` 读取的结果。
-- 父仓库和三个 fork 没有维护者遗留的未提交修改。
+- 父仓库和四个 fork 没有维护者遗留的未提交修改。
 
 本机 workspace 路径、独立 checkout 位置和 agent 协作约定属于内部开发信息，应记录在
 开发文档或 `AGENTS.md`，不写入公开 README。

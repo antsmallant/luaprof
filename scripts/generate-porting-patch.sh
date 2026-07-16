@@ -4,7 +4,7 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 usage() {
-    echo "usage: $0 lua54|lua55|skynet" >&2
+    echo "usage: $0 lua46|lua54|lua55|skynet" >&2
     exit 2
 }
 
@@ -12,6 +12,10 @@ test "$#" -eq 1 || usage
 
 # Baselines are deliberate; the target is always the current submodule HEAD.
 case "$1" in
+lua46)
+    source_dir="$repo_root/3rd/lua-5.4.6"
+    baseline=0858f40
+    ;;
 lua54)
     source_dir="$repo_root/3rd/lua-5.4.8"
     baseline=ef6de10

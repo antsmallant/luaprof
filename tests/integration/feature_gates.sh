@@ -40,6 +40,7 @@ check_lua_disabled() {
 	fi
 }
 
+check_lua_disabled lua46 "$repo_root/3rd/lua-5.4.6" src
 check_lua_disabled lua54 "$repo_root/3rd/lua-5.4.8" src
 check_lua_disabled lua55 "$repo_root/3rd/lua-5.5.0" src
 check_lua_disabled skynet-lua "$repo_root/integration/skynet" 3rd/lua

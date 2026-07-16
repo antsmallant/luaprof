@@ -12,6 +12,7 @@ V1 正式支持以下组合：
 
 | 宿主 | Lua | CPU backend |
 | --- | --- | --- |
+| thread-per-VM | 项目固定的 PUC Lua 5.4.6 fork | `CLOCK_THREAD_CPUTIME_ID` |
 | thread-per-VM | 项目固定的 PUC Lua 5.4.8 fork | `CLOCK_THREAD_CPUTIME_ID` |
 | thread-per-VM | 项目固定的 PUC Lua 5.5.0 fork | `CLOCK_THREAD_CPUTIME_ID` |
 | Skynet | 项目固定的 Skynet fork 及其内嵌定制 Lua 5.5 | 每个 worker 的线程 CPU timer |
@@ -52,6 +53,9 @@ VM 数据结构重新审查，不能视为 ABI 兼容。
 对于普通 PUC Lua 5.4 或 5.5 项目，直接采用本仓库固定的准确 fork 是风险最低的方式：
 
 ```sh
+git submodule update --init 3rd/lua-5.4.6
+make lua46
+
 git submodule update --init 3rd/lua-5.4.8
 make lua
 
@@ -59,8 +63,8 @@ git submodule update --init 3rd/lua-5.5.0
 make lua55
 ```
 
-这些 fork 默认关闭 profiling bridge；父项目的 `make lua`、`make lua55` 和 module target
-会自动以 `LUAPROF=1` 构建。脱离父项目直接构建 fork 时必须显式启用：
+这些 fork 默认关闭 profiling bridge；父项目的 `make lua46`、`make lua`、`make lua55`
+和 module target 会自动以 `LUAPROF=1` 构建。脱离父项目直接构建 fork 时必须显式启用：
 
 ```sh
 make clean
@@ -90,12 +94,13 @@ Skynet 不能使用父项目的 PUC Lua fork。必须保留 Skynet 自带的 `3r
 从固定 baseline 到当前 submodule `HEAD` 生成完整 patch：
 
 ```sh
+./scripts/generate-porting-patch.sh lua46 > /tmp/luaprof-lua46.patch
 ./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
 ./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
 ./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
 ```
 
-脚本内部只固定三个 baseline，终点使用对应仓库的 `HEAD`，修改范围使用仓库根目录
+脚本内部只固定四个 baseline，终点使用对应仓库的 `HEAD`，修改范围使用仓库根目录
 `-- .`；后续 fork 提交变化时不需要修改 target hash 或文件清单。目标正好基于相同版本
 时，先用 `git apply --check` 检查再正式 apply。`HEAD` 指本地 submodule 当前检出的
 commit，脚本不会自动 fetch 远端；维护者应先更新 submodule。如果 Lua 已有内部改造，
@@ -110,12 +115,23 @@ commit，脚本不会自动 fetch 远端；维护者应先更新 submodule。如
 使用仓库固定 Lua 时按 ABI 选择 target：
 
 ```sh
+make module-lua46    # build/lua46/luaprof.so, PUC Lua 5.4.6
 make module          # build/luaprof.so, PUC Lua 5.4.8
 make module-lua55    # build/lua55/luaprof.so, PUC Lua 5.5.0
 ```
 
 对于标准目录结构的自有 PUC Lua，可以让当前 Makefile 对那棵源码构建独立产物目录。
-Lua 5.4：
+Lua 5.4.6：
+
+```sh
+make module-lua46 \
+    LUA46_DIR=/absolute/path/to/lua-5.4.6 \
+    LUA46_SRC=/absolute/path/to/lua-5.4.6/src \
+    LUA46_LIB=/absolute/path/to/lua-5.4.6/src/liblua.a \
+    LUA46_BUILD_DIR=/absolute/path/to/project-build/luaprof-lua46
+```
+
+Lua 5.4.8：
 
 ```sh
 make module \
@@ -141,7 +157,8 @@ Makefile 中 `$(LUA_MODULE)` 的 source list 和编译参数移入项目构建�
 - 所有 module object 使用 C11、`-fPIC` 和目标 Lua 的 include path。
 - Lua core 和 luaprof module 编译时都定义 `LUA_USE_LUAPROF`；推荐通过 fork 的
   `LUAPROF=1` 统一设置 Lua core，不要只给个别 `.c` 文件加宏。
-- PUC Lua 5.4.8/5.5.0 module 分别定义 `LUAPROF_EXPECT_LUA_VERSION=504/505`。
+- PUC Lua 5.4.6/5.4.8 module 定义 `LUAPROF_EXPECT_LUA_VERSION=504`，5.5.0 module
+  定义 `LUAPROF_EXPECT_LUA_VERSION=505`。
 - shared module 链接 `-lm -lz -ldl -pthread -lrt`。
 - module 保留对 `lua_*` 和 `lua_profile_*` 的未定义引用，由宿主正在运行的 Lua 解析；
   不要把另一份 `liblua.a` 静态装进 module。
