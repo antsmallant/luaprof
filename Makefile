@@ -103,7 +103,7 @@ LUA_PLATFORM ?= linux
 override CPPFLAGS += -DLUA_USE_LUAPROF
 
 .PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-feature-gates test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-lua-symbols test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-porting-patches test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
-.PHONY: bench-lua46-combined bench-lua46-vm example-lua46 lua46 module-lua46 submodule-lua46 test-lua46 test-lua46-api test-lua46-combined-sampling test-lua46-cpu-sampling test-lua46-lua-symbols test-lua46-memory-sampling test-lua46-thread-vm test-lua46-vm-bridge
+.PHONY: bench-lua46-combined bench-lua46-vm example-lua46 lua46 module-lua46 submodule-lua46 test-lua46 test-lua46-api test-lua46-combined-sampling test-lua46-cpu-sampling test-lua46-lua-symbols test-lua46-memory-sampling test-lua46-thread-vm test-lua46-vm-bridge update-porting-patches
 
 all: thread-vm module
 
@@ -474,6 +474,9 @@ test-feature-gates: submodule-lua submodule-lua46 submodule-lua55 submodule-skyn
 
 test-porting-patches: submodule-lua submodule-lua46 submodule-lua55 submodule-skynet
 	./tests/integration/porting_patches.sh
+
+update-porting-patches: submodule-lua submodule-lua46 submodule-lua55 submodule-skynet
+	./scripts/update-porting-patches.sh
 
 test-lua46: test-lua46-thread-vm test-lua46-lua-symbols test-lua46-api test-lua46-vm-bridge test-lua46-cpu-sampling test-lua46-memory-sampling test-lua46-combined-sampling
 

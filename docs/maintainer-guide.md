@@ -174,23 +174,32 @@ git status --short
 ## 5. 更新 Lua bridge 与 patch
 
 生成和应用入口见 [Lua 5.4](porting/lua-5.4.md)、[Lua 5.5](porting/lua-5.5.md) 和
-[Skynet](porting/skynet.md)。实现差异以生成 patch 和固定 fork 源码为准，不另外维护
-逐文件或逐函数文字清单。
+[Skynet](porting/skynet.md)。公开交付物位于 [`patches/`](../patches/README.md)，
+实现差异以已提交 patch 和固定 fork 源码为准，不另外维护逐文件或逐函数文字清单。
 
 不要只修改其中一个 PUC Lua fork。若 contract 也适用于 Skynet，必须将等效改动移植到
 Skynet 自带的 `3rd/lua`，并分别运行对应 bridge test。
 
 ### 生成移植 patch
 
-提交 fork 并更新父仓库 submodule 后，用当前 `HEAD` 生成对外移植 patch：
+提交 fork 并更新父仓库 gitlink 后，一次性更新四份对外 patch：
+
+```sh
+make update-porting-patches
+make test-porting-patches
+make test-feature-gates
+```
+
+`update-porting-patches.sh` 先在临时目录生成全部文件，四份都成功后才替换 `patches/`
+中的发布产物。不要手工编辑 patch。gitlink 变化时还必须同步更新
+`patches/README.md` 的完整 baseline/target commit；测试会检查 target 元数据和已提交
+patch 是否与当前 fork 字节一致，并分别执行 baseline forward 和 target reverse
+apply-check。
+
+需要调试单一目标时，可以把底层生成器输出到临时文件；不要直接覆盖发布目录：
 
 ```sh
 ./scripts/generate-porting-patch.sh lua46 > /tmp/luaprof-lua46.patch
-./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
-./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
-./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
-make test-porting-patches
-make test-feature-gates
 ```
 
 脚本中的 baseline 对应固定 master。Lua fork 的 master 可以包含 `.gitignore` 这类
@@ -270,6 +279,7 @@ sample index，并检查 drop、truncation 和 overflow 计数。
 - README 保持面向首次使用，不放入本机路径和内部工作流。
 - `.gitmodules` 只使用公开 HTTPS fetch URL。
 - 四个 gitlink commit 已经推送到各自 `luaprof` 分支。
+- `patches/` 的四份发布文件与当前 gitlink 一致，baseline/target 元数据准确。
 - README 和 docs 入口有效。
 - 四个 module 使用正确 Lua ABI，且没有静态包含另一份 Lua。
 - `make test`、`make test-lua46`、`make test-lua55` 和 `make test-skynet` 通过。

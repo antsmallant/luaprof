@@ -91,22 +91,19 @@ Skynet 不能使用父项目的 PUC Lua fork。必须保留 Skynet 自带的 `3r
 - [Lua 5.5 bridge 移植](porting/lua-5.5.md)
 - [Skynet embedded Lua 与 scheduler 移植](porting/skynet.md)
 
-从固定 baseline 到当前 submodule `HEAD` 生成完整 patch：
+本仓库已经提交四份完整 patch，使用者不需要初始化 submodule 或自行生成：
 
-```sh
-./scripts/generate-porting-patch.sh lua46 > /tmp/luaprof-lua46.patch
-./scripts/generate-porting-patch.sh lua54 > /tmp/luaprof-lua54.patch
-./scripts/generate-porting-patch.sh lua55 > /tmp/luaprof-lua55.patch
-./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
-```
+| 目标 | Patch |
+| --- | --- |
+| Lua 5.4.6 | [`patches/lua-5.4.6.patch`](../patches/lua-5.4.6.patch) |
+| Lua 5.4.8 | [`patches/lua-5.4.8.patch`](../patches/lua-5.4.8.patch) |
+| Lua 5.5.0 | [`patches/lua-5.5.0.patch`](../patches/lua-5.5.0.patch) |
+| Skynet | [`patches/skynet.patch`](../patches/skynet.patch) |
 
-脚本内部只固定四个 baseline，终点使用对应仓库的 `HEAD`，修改范围使用仓库根目录
-`-- .`；后续 fork 提交变化时不需要修改 target hash 或文件清单。目标正好基于相同版本
-时，先用 `git apply --check` 检查再正式 apply。`HEAD` 指本地 submodule 当前检出的
-commit，脚本不会自动 fetch 远端；维护者应先更新 submodule。如果 Lua 已有内部改造，
-必须直接审查完整 patch 并重新运行对应验证，不能只挑选部分 diff。三份 porting 文档
-不再重复维护逐文件、逐字段或逐函数的文字说明；实时生成的 patch 是实现差异的唯一
-准确来源。Skynet patch 同时包含 Lua bridge 和宿主 scheduler 集成。
+准确 baseline、target commit 和通用应用命令见 [`patches/README.md`](../patches/README.md)。
+目标正好基于相同版本时，先用 `git apply --check` 检查再正式 apply。如果 Lua 已有内部
+改造，必须审查完整 patch 并重新运行对应验证，不能只挑选部分 diff。Skynet patch 同时
+包含 Lua bridge 和宿主 scheduler/host 集成。
 
 ## 4. thread-per-VM 项目接入
 

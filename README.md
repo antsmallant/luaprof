@@ -10,7 +10,8 @@
 `luaprof` 需要在 Lua VM 内加入少量 bridge 代码，用于发布 VM 状态、在安全点
 采集调用栈和捕获内存分配事件。仓库提供 Lua 5.4.6、Lua 5.4.8、Lua 5.5.0 和
 Skynet 的固定集成版本；使用其他 Lua 5.4/5.5 版本或定制 Skynet 时，可按
-[接入指南](docs/integration.md)生成对应 patch，并结合自己的 VM 改动完成移植和验证。
+[已提交的移植 patch](patches/README.md)和[接入指南](docs/integration.md)，结合自己的
+VM 改动完成移植和验证。
 
 ## 快速开始
 
@@ -101,6 +102,7 @@ dot -Tsvg -o docs/images/skynet-memory-inuse.svg \
 ## 文档
 
 - [项目接入指南](docs/integration.md)
+- [可直接应用的移植 patch](patches/README.md)
 - [采样模型与结果解读](docs/profiling-model.md)
 - [维护者指南](docs/maintainer-guide.md)
 

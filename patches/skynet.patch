@@ -1,0 +1,1178 @@
+diff --git a/3rd/lua/ldebug.c b/3rd/lua/ldebug.c
+index 8df5f5f28b347715f1e3c717b88997ec5f73359c..020343e1fac1b973c2548132320f43985c22cdc9 100644
+--- a/3rd/lua/ldebug.c
++++ b/3rd/lua/ldebug.c
+@@ -320,7 +320,17 @@ static void collectvalidlines (lua_State *L, Closure *f) {
+ }
+ 
+ 
+-static const char *getfuncname (lua_State *L, CallInfo *ci, const char **name) {
++#if defined(LUA_USE_LUAPROF)
++#define l_getfuncname      luaG_getfuncname
++#define l_getfuncname_def
++#else
++#define l_getfuncname      getfuncname
++#define l_getfuncname_def  static
++#endif
++
++
++l_getfuncname_def const char *l_getfuncname (lua_State *L, CallInfo *ci,
++                                             const char **name) {
+   /* calling function is a known function? */
+   if (ci != NULL && !(ci->callstatus & CIST_TAIL))
+     return funcnamefromcall(L, ci->previous, name);
+@@ -366,7 +376,7 @@ static int auxgetinfo (lua_State *L, const char *what, lua_Debug *ar,
+         break;
+       }
+       case 'n': {
+-        ar->namewhat = getfuncname(L, ci, &ar->name);
++        ar->namewhat = l_getfuncname(L, ci, &ar->name);
+         if (ar->namewhat == NULL) {
+           ar->namewhat = "";  /* not found */
+           ar->name = NULL;
+@@ -976,4 +986,3 @@ int luaG_traceexec (lua_State *L, const Instruction *pc) {
+   }
+   return 1;  /* keep 'trap' on */
+ }
+-
+diff --git a/3rd/lua/ldebug.h b/3rd/lua/ldebug.h
+index 20d07818b4012f9e47b1c9b4b2327bab37823392..387e13396be4544868f5120ea297c8d8d2604b5f 100644
+--- a/3rd/lua/ldebug.h
++++ b/3rd/lua/ldebug.h
+@@ -37,6 +37,10 @@
+ 
+ 
+ LUAI_FUNC int luaG_getfuncline (const Proto *f, int pc);
++#if defined(LUA_USE_LUAPROF)
++LUAI_FUNC const char *luaG_getfuncname (lua_State *L, CallInfo *ci,
++                                        const char **name);
++#endif
+ LUAI_FUNC const char *luaG_findlocal (lua_State *L, CallInfo *ci, int n,
+                                                     StkId *pos);
+ LUAI_FUNC l_noret luaG_typeerror (lua_State *L, const TValue *o,
+diff --git a/3rd/lua/ldo.c b/3rd/lua/ldo.c
+index 6d0184ecd50f2df40f1e246690ce3b697ba9f1d3..eccee7d8e1dba9a3adbbca55cae4155c2fe4b0a1 100644
+--- a/3rd/lua/ldo.c
++++ b/3rd/lua/ldo.c
+@@ -25,6 +25,7 @@
+ #include "lobject.h"
+ #include "lopcodes.h"
+ #include "lparser.h"
++#include "lprofile.h"
+ #include "lstate.h"
+ #include "lstring.h"
+ #include "ltable.h"
+@@ -123,6 +124,7 @@ void luaD_seterrorobj (lua_State *L, TStatus errcode, StkId oldtop) {
+ 
+ 
+ l_noret luaD_throw (lua_State *L, TStatus errcode) {
++  luaP_sethoststate(L);
+   if (L->errorJmp) {  /* thread has an error handler? */
+     L->errorJmp->status = errcode;  /* set status */
+     LUAI_THROW(L, L->errorJmp);  /* jump to it */
+@@ -326,6 +328,7 @@ int luaD_reallocstack (lua_State *L, int newsize, int raiseerror) {
+   StkId oldstack = L->stack.p;
+   lu_byte oldgcstop = G(L)->gcstopem;
+   lua_assert(newsize <= MAXSTACK || newsize == ERRORSTACKSIZE);
++  luaP_blockcapture(L);
+   relstack(L);  /* change pointers to offsets */
+   G(L)->gcstopem = 1;  /* stop emergency collection */
+   newstack = luaM_reallocvector(L, oldstack, oldsize + EXTRA_STACK,
+@@ -333,12 +336,14 @@ int luaD_reallocstack (lua_State *L, int newsize, int raiseerror) {
+   G(L)->gcstopem = oldgcstop;  /* restore emergency collection */
+   if (l_unlikely(newstack == NULL)) {  /* reallocation failed? */
+     correctstack(L, oldstack);  /* change offsets back to pointers */
++    luaP_unblockcapture(L);
+     if (raiseerror)
+       luaM_error(L);
+     else return 0;  /* do not raise an error */
+   }
+   L->stack.p = newstack;
+   correctstack(L, oldstack);  /* change offsets back to pointers */
++  luaP_unblockcapture(L);
+   L->stack_last.p = L->stack.p + newsize;
+   for (i = oldsize + EXTRA_STACK; i < newsize + EXTRA_STACK; i++)
+     setnilvalue(s2v(newstack + i)); /* erase new segment */
+@@ -643,6 +648,7 @@ l_sinline int precallC (lua_State *L, StkId func, unsigned status,
+                                             lua_CFunction f) {
+   int n;  /* number of returns */
+   CallInfo *ci;
++  luaP_stateguard(profileguard);
+   checkstackp(L, LUA_MINSTACK, func);  /* ensure minimum stack size */
+   L->ci = ci = prepCallInfo(L, func, status | CIST_C,
+                                L->top.p + LUA_MINSTACK);
+@@ -651,10 +657,12 @@ l_sinline int precallC (lua_State *L, StkId func, unsigned status,
+     int narg = cast_int(L->top.p - func) - 1;
+     luaD_hook(L, LUA_HOOKCALL, -1, 1, narg);
+   }
++  luaP_enterstate(L, &profileguard, LUA_PROFILE_C, f);
+   lua_unlock(L);
+   n = (*f)(L);  /* do the actual call */
+   lua_lock(L);
+   api_checknelems(L, n);
++  luaP_leaveframe(L, &profileguard, ci->previous);
+   luaD_poscall(L, ci, n);
+   return n;
+ }
+@@ -844,15 +852,19 @@ static void finishCcall (lua_State *L, CallInfo *ci) {
+   else {
+     TStatus status = LUA_YIELD;  /* default if there were no errors */
+     lua_KFunction kf = ci->u.c.k;  /* continuation function */
++    luaP_stateguard(profileguard);
+     /* must have a continuation and must be able to call it */
+     lua_assert(kf != NULL && yieldable(L));
+     if (ci->callstatus & CIST_YPCALL)   /* was inside a 'lua_pcallk'? */
+       status = finishpcallk(L, ci);  /* finish it */
+     adjustresults(L, LUA_MULTRET);  /* finish 'lua_callk' */
++    luaP_enterstate(L, &profileguard, LUA_PROFILE_C,
++                    luaP_cfunctionfromci(ci));
+     lua_unlock(L);
+     n = (*kf)(L, APIstatus(status), ci->u.c.ctx);  /* call continuation */
+     lua_lock(L);
+     api_checknelems(L, n);
++    luaP_leaveframe(L, &profileguard, ci->previous);
+   }
+   luaD_poscall(L, ci, n);  /* finish 'luaD_call' */
+ }
+@@ -932,10 +944,14 @@ static void resume (lua_State *L, void *ud) {
+     }
+     else {  /* 'common' yield */
+       if (ci->u.c.k != NULL) {  /* does it have a continuation function? */
++        luaP_stateguard(profileguard);
++        luaP_enterstate(L, &profileguard, LUA_PROFILE_C,
++                        luaP_cfunctionfromci(ci));
+         lua_unlock(L);
+         n = (*ci->u.c.k)(L, LUA_YIELD, ci->u.c.ctx); /* call continuation */
+         lua_lock(L);
+         api_checknelems(L, n);
++        luaP_leaveframe(L, &profileguard, ci->previous);
+       }
+       luaD_poscall(L, ci, n);  /* finish 'luaD_call' */
+     }
+@@ -993,6 +1009,9 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs,
+   }
+   *nresults = (status == LUA_YIELD) ? L->ci->u2.nyield
+                                     : cast_int(L->top.p - (L->ci->func.p + 1));
++  luaP_sethoststate(L);
++  if (from != NULL)
++    luaP_syncstate(from);
+   lua_unlock(L);
+   return APIstatus(status);
+ }
+@@ -1094,6 +1113,7 @@ TStatus luaD_pcall (lua_State *L, Pfunc func, void *u, ptrdiff_t old_top,
+     luaD_shrinkstack(L);   /* restore stack size in case of overflow */
+   }
+   L->errfunc = old_errfunc;
++  luaP_syncstate(L);
+   return status;
+ }
+ 
+@@ -1160,5 +1180,3 @@ TStatus luaD_protectedparser (lua_State *L, ZIO *z, const char *name,
+   decnny(L);
+   return status;
+ }
+-
+-
+diff --git a/3rd/lua/lgc.c b/3rd/lua/lgc.c
+index 505dfb18eb52c484a3d524b96d8189c631807eef..5bed221520fb3fd7becbd233616e1e9e9382440f 100644
+--- a/3rd/lua/lgc.c
++++ b/3rd/lua/lgc.c
+@@ -20,6 +20,7 @@
+ #include "lgc.h"
+ #include "lmem.h"
+ #include "lobject.h"
++#include "lprofile.h"
+ #include "lstate.h"
+ #include "lstring.h"
+ #include "ltable.h"
+@@ -1445,6 +1446,8 @@ static void entergen (lua_State *L, global_State *g) {
+ */
+ void luaC_changemode (lua_State *L, int newmode) {
+   global_State *g = G(L);
++  luaP_stateguard(profileguard);
++  luaP_enterstate(L, &profileguard, LUA_PROFILE_GC, NULL);
+   if (g->gckind == KGC_GENMAJOR)  /* doing major collections? */
+     g->gckind = KGC_INC;  /* already incremental but in name */
+   if (newmode != g->gckind) {  /* does it need to change? */
+@@ -1455,6 +1458,7 @@ void luaC_changemode (lua_State *L, int newmode) {
+       entergen(L, g);
+     }
+   }
++  luaP_leavestate(L, &profileguard);
+ }
+ 
+ 
+@@ -1534,6 +1538,8 @@ static void deletelist (lua_State *L, GCObject *p, GCObject *limit) {
+ */
+ void luaC_freeallobjects (lua_State *L) {
+   global_State *g = G(L);
++  luaP_stateguard(profileguard);
++  luaP_enterstate(L, &profileguard, LUA_PROFILE_GC, NULL);
+   g->gcstp = GCSTPCLS;  /* no extra finalizers after here */
+   luaC_changemode(L, KGC_INC);
+   separatetobefnz(g, 1);  /* separate all objects with finalizers */
+@@ -1543,6 +1549,7 @@ void luaC_freeallobjects (lua_State *L) {
+   lua_assert(g->finobj == NULL);  /* no new finalizers */
+   deletelist(L, g->fixedgc, NULL);  /* collect fixed objects */
+   lua_assert(g->strt.nuse == 0);
++  luaP_leavestate(L, &profileguard);
+ }
+ 
+ 
+@@ -1745,6 +1752,8 @@ static void incstep (lua_State *L, global_State *g) {
+ */
+ void luaC_step (lua_State *L) {
+   global_State *g = G(L);
++  luaP_stateguard(profileguard);
++  luaP_enterstate(L, &profileguard, LUA_PROFILE_GC, NULL);
+   lua_assert(!g->gcemergency);
+   if (!gcrunning(g)) {  /* not running? */
+     if (g->gcstp & GCSTPUSR)  /* stopped by the user? */
+@@ -1763,6 +1772,7 @@ void luaC_step (lua_State *L) {
+     }
+     luai_tracegc(L, 0);  /* for internal debugging */
+   }
++  luaP_leavestate(L, &profileguard);
+ }
+ 
+ 
+@@ -1791,6 +1801,8 @@ static void fullinc (lua_State *L, global_State *g) {
+ */
+ void luaC_fullgc (lua_State *L, int isemergency) {
+   global_State *g = G(L);
++  luaP_stateguard(profileguard);
++  luaP_enterstate(L, &profileguard, LUA_PROFILE_GC, NULL);
+   lua_assert(!g->gcemergency);
+   g->gcemergency = cast_byte(isemergency);  /* set flag */
+   switch (g->gckind) {
+@@ -1803,8 +1815,7 @@ void luaC_fullgc (lua_State *L, int isemergency) {
+       break;
+   }
+   g->gcemergency = 0;
++  luaP_leavestate(L, &profileguard);
+ }
+ 
+ /* }====================================================== */
+-
+-
+diff --git a/3rd/lua/lmem.c b/3rd/lua/lmem.c
+index de8503d91b9faacabff0d8ff650af9a04df30e0e..fd60dae21015b794a5d92ef6903f99fd44bbfa6e 100644
+--- a/3rd/lua/lmem.c
++++ b/3rd/lua/lmem.c
+@@ -19,6 +19,7 @@
+ #include "lgc.h"
+ #include "lmem.h"
+ #include "lobject.h"
++#include "lprofile.h"
+ #include "lstate.h"
+ 
+ 
+@@ -152,6 +153,7 @@ void luaM_free_ (lua_State *L, void *block, size_t osize) {
+   lua_assert((osize == 0) == (block == NULL));
+   callfrealloc(g, block, osize, 0);
+   g->GCdebt += cast(l_mem, osize);
++  luaP_allocation(L, block, NULL, osize, 0, 1);
+ }
+ 
+ 
+@@ -180,11 +182,14 @@ void *luaM_realloc_ (lua_State *L, void *block, size_t osize, size_t nsize) {
+   newblock = firsttry(g, block, osize, nsize);
+   if (l_unlikely(newblock == NULL && nsize > 0)) {
+     newblock = tryagain(L, block, osize, nsize);
+-    if (newblock == NULL)  /* still no memory? */
++    if (newblock == NULL) {  /* still no memory? */
++      luaP_allocation(L, block, NULL, osize, nsize, 0);
+       return NULL;  /* do not update 'GCdebt' */
++    }
+   }
+   lua_assert((nsize == 0) == (newblock == NULL));
+   g->GCdebt -= cast(l_mem, nsize) - cast(l_mem, osize);
++  luaP_allocation(L, block, newblock, osize, nsize, 1);
+   return newblock;
+ }
+ 
+@@ -206,10 +211,13 @@ void *luaM_malloc_ (lua_State *L, size_t size, int tag) {
+     void *newblock = firsttry(g, NULL, cast_sizet(tag), size);
+     if (l_unlikely(newblock == NULL)) {
+       newblock = tryagain(L, NULL, cast_sizet(tag), size);
+-      if (newblock == NULL)
++      if (newblock == NULL) {
++        luaP_allocation(L, NULL, NULL, 0, size, 0);
+         luaM_error(L);
++      }
+     }
+     g->GCdebt -= cast(l_mem, size);
++    luaP_allocation(L, NULL, newblock, 0, size, 1);
+     return newblock;
+   }
+ }
+diff --git a/3rd/lua/lprofile.c b/3rd/lua/lprofile.c
+new file mode 100644
+index 0000000000000000000000000000000000000000..5191f62b4684c48fabbc77abbc0200b28e0b7e60
+--- /dev/null
++++ b/3rd/lua/lprofile.c
+@@ -0,0 +1,272 @@
++/*
++** Sampling-profiler bridge
++*/
++
++#define lprofile_c
++#define LUA_CORE
++
++#include "lprefix.h"
++
++#include <limits.h>
++#include <string.h>
++
++#include "lua.h"
++
++#include "lapi.h"
++#include "ldebug.h"
++#include "lobject.h"
++#include "lprofile.h"
++#include "lstate.h"
++
++
++lua_CFunction luaP_cfunctionfromci (CallInfo *ci) {
++  TValue *func;
++  if (ci == NULL)
++    return NULL;
++  func = s2v(ci->func.p);
++  if (ttislcf(func))
++    return fvalue(func);
++  if (ttisCclosure(func))
++    return clCvalue(func)->f;
++  return NULL;
++}
++
++
++static int statefromci (lua_State *L, CallInfo *ci,
++                        lua_CFunction *cfunction) {
++  if (ci == NULL || ci == &L->base_ci) {
++    *cfunction = NULL;
++    return LUA_PROFILE_HOST;
++  }
++  if (isLua(ci)) {
++    *cfunction = NULL;
++    return LUA_PROFILE_LUA;
++  }
++  *cfunction = luaP_cfunctionfromci(ci);
++  return LUA_PROFILE_C;
++}
++
++
++static void publishstate (lua_State *L, int state,
++                          lua_CFunction cfunction) {
++  global_State *g = G(L);
++  lua_ProfileStateChange callback = g->profilehooks.state_change;
++  if (g->profilethread == L && L->profilestate == state &&
++      L->profilecfunction == cfunction)
++    return;
++  L->profilestate = cast_byte(state);
++  L->profilecfunction = cfunction;
++  g->profilethread = L;
++  if (callback != NULL && !g->profileincallback) {
++    g->profileincallback = 1;
++    callback(g->ud_profile, L, state, cfunction);
++    g->profileincallback = 0;
++  }
++}
++
++
++void luaP_enterstate_ (lua_State *L, luaP_StateGuard *guard,
++                       int state, lua_CFunction cfunction) {
++  guard->active = 1;
++  guard->state = L->profilestate;
++  guard->cfunction = L->profilecfunction;
++  publishstate(L, state, cfunction);
++}
++
++
++void luaP_leavestate_ (lua_State *L, const luaP_StateGuard *guard) {
++  if (guard->active)
++    publishstate(L, guard->state, guard->cfunction);
++  else
++    luaP_syncstate(L);
++}
++
++
++void luaP_leaveframe_ (lua_State *L, const luaP_StateGuard *guard,
++                       CallInfo *previous) {
++  if (guard->active)
++    publishstate(L, guard->state, guard->cfunction);
++  else {
++    lua_CFunction cfunction;
++    int state = statefromci(L, previous, &cfunction);
++    publishstate(L, state, cfunction);
++  }
++}
++
++
++void luaP_syncstate (lua_State *L) {
++  if (luaP_stateenabled(L)) {
++    lua_CFunction cfunction;
++    int state = statefromci(L, L->ci, &cfunction);
++    publishstate(L, state, cfunction);
++  }
++}
++
++
++void luaP_sethoststate (lua_State *L) {
++  if (luaP_stateenabled(L))
++    publishstate(L, LUA_PROFILE_HOST, NULL);
++}
++
++
++#if defined(__GNUC__) || defined(__clang__)
++
++static unsigned int takepending (global_State *g) {
++  return __atomic_exchange_n(&g->profilepending, 0, __ATOMIC_RELAXED);
++}
++
++static void addpending (global_State *g, unsigned int count) {
++  unsigned int old = __atomic_load_n(&g->profilepending, __ATOMIC_RELAXED);
++  for (;;) {
++    unsigned int next = (UINT_MAX - old < count) ? UINT_MAX : old + count;
++    if (__atomic_compare_exchange_n(&g->profilepending, &old, next, 1,
++                                    __ATOMIC_RELAXED, __ATOMIC_RELAXED))
++      return;
++  }
++}
++
++#else
++
++static unsigned int takepending (global_State *g) {
++  unsigned int pending = g->profilepending;
++  g->profilepending = 0;
++  return pending;
++}
++
++static void addpending (global_State *g, unsigned int count) {
++  if (UINT_MAX - g->profilepending < count)
++    g->profilepending = UINT_MAX;
++  else
++    g->profilepending += count;
++}
++
++#endif
++
++
++void luaP_safepoint_ (lua_State *L, const Instruction *pc) {
++  global_State *g = G(L);
++  lua_ProfileSafePoint callback = g->profilehooks.safe_point;
++  unsigned int pending;
++  if (callback == NULL || g->profileincallback)
++    return;
++  pending = takepending(g);
++  if (pending == 0)
++    return;
++  if (isLua(L->ci))
++    L->ci->u.l.savedpc = pc + 1;
++  g->profileincallback = 1;
++  callback(g->ud_profile, L, pending);
++  g->profileincallback = 0;
++}
++
++
++void luaP_allocation_ (lua_State *L, void *old_pointer,
++                       void *new_pointer, size_t old_size,
++                       size_t new_size, int success) {
++  global_State *g = G(L);
++  lua_ProfileAllocation callback = g->profilehooks.allocation;
++  lua_ProfileAllocEvent event;
++  if (callback == NULL || g->profileincallback)
++    return;
++  event.old_pointer = old_pointer;
++  event.new_pointer = new_pointer;
++  event.old_size = old_size;
++  event.new_size = new_size;
++  event.success = cast_byte(success != 0);
++  g->profileincallback = 1;
++  callback(g->ud_profile, L, &event);
++  g->profileincallback = 0;
++}
++
++
++LUA_API void lua_setprofilehooks (lua_State *L,
++                                  const lua_ProfileHooks *hooks, void *ud) {
++  global_State *g;
++  int hadsafepoint;
++  lua_lock(L);
++  g = G(L);
++  hadsafepoint = (g->profilehooks.safe_point != NULL);
++  if (hooks == NULL)
++    memset(&g->profilehooks, 0, sizeof(g->profilehooks));
++  else
++    g->profilehooks = *hooks;
++  g->ud_profile = ud;
++  g->profilethread = NULL;
++  if (!hadsafepoint || g->profilehooks.safe_point == NULL)
++    (void)takepending(g);
++  luaP_syncstate(L);
++  lua_unlock(L);
++}
++
++
++LUA_API void lua_profile_request (lua_State *L, unsigned int count) {
++  if (count != 0)
++    addpending(G(L), count);
++}
++
++
++LUA_API int lua_getprofilestate (lua_State *L,
++                                 lua_CFunction *cfunction) {
++  lua_CFunction current;
++  int state;
++  lua_lock(L);
++  state = statefromci(L, L->ci, &current);
++  if (cfunction != NULL)
++    *cfunction = current;
++  lua_unlock(L);
++  return state;
++}
++
++
++LUA_API size_t lua_profile_capturestack (lua_State *L,
++                                         lua_ProfileFrame *frames,
++                                         size_t capacity,
++                                         int *truncated) {
++  CallInfo *ci;
++  size_t count = 0;
++  if (truncated != NULL)
++    *truncated = 0;
++  if (L->profilecaptureblocked) {
++    if (truncated != NULL)
++      *truncated = 1;
++    return 0;
++  }
++  for (ci = L->ci; ci != &L->base_ci; ci = ci->previous) {
++    lua_ProfileFrame *frame;
++    if (count == capacity) {
++      if (truncated != NULL)
++        *truncated = 1;
++      break;
++    }
++    frame = &frames[count++];
++    memset(frame, 0, sizeof(*frame));
++    {
++      const char *name = NULL;
++      (void)luaG_getfuncname(L, ci, &name);
++      if (name != NULL) {
++        frame->name = name;
++        frame->name_length = strlen(name);
++      }
++    }
++    if (isLua(ci)) {
++      Proto *p = ci_func(ci)->p;
++      int currentpc = pcRel(ci->u.l.savedpc, p);
++      frame->kind = LUA_PROFILE_FRAME_LUA;
++      frame->function = p;
++      frame->linedefined = p->linedefined;
++      frame->currentline = (currentpc < 0)
++                         ? -1 : luaG_getfuncline(p, currentpc);
++      if (p->source != NULL) {
++        frame->source = getstr(p->source);
++        frame->source_length = tsslen(p->source);
++      }
++    }
++    else {
++      frame->kind = LUA_PROFILE_FRAME_C;
++      frame->cfunction = luaP_cfunctionfromci(ci);
++      frame->linedefined = -1;
++      frame->currentline = -1;
++    }
++  }
++  return count;
++}
+diff --git a/3rd/lua/lprofile.h b/3rd/lua/lprofile.h
+new file mode 100644
+index 0000000000000000000000000000000000000000..2b88e56b1796a16341db36680ae2b15e6652e4f4
+--- /dev/null
++++ b/3rd/lua/lprofile.h
+@@ -0,0 +1,100 @@
++/*
++** Internal sampling-profiler bridge
++*/
++
++#ifndef lprofile_h
++#define lprofile_h
++
++#include "lstate.h"
++
++#if defined(LUA_USE_LUAPROF)
++
++typedef struct luaP_StateGuard {
++  lu_byte active;
++  lu_byte state;
++  lua_CFunction cfunction;
++} luaP_StateGuard;
++
++#define luaP_stateguard(name)  luaP_StateGuard name
++
++#if defined(__GNUC__) || defined(__clang__)
++#define luaP_loadpending(g) \
++  __atomic_load_n(&(g)->profilepending, __ATOMIC_RELAXED)
++#else
++#define luaP_loadpending(g)  ((g)->profilepending)
++#endif
++
++LUAI_FUNC void luaP_enterstate_ (lua_State *L, luaP_StateGuard *guard,
++                                 int state, lua_CFunction cfunction);
++LUAI_FUNC void luaP_leavestate_ (lua_State *L,
++                                 const luaP_StateGuard *guard);
++LUAI_FUNC void luaP_leaveframe_ (lua_State *L,
++                                 const luaP_StateGuard *guard,
++                                 CallInfo *previous);
++LUAI_FUNC void luaP_syncstate (lua_State *L);
++LUAI_FUNC void luaP_sethoststate (lua_State *L);
++LUAI_FUNC lua_CFunction luaP_cfunctionfromci (CallInfo *ci);
++LUAI_FUNC void luaP_safepoint_ (lua_State *L, const Instruction *pc);
++LUAI_FUNC void luaP_allocation_ (lua_State *L, void *old_pointer,
++                                 void *new_pointer, size_t old_size,
++                                 size_t new_size, int success);
++
++#define luaP_stateenabled(L)  (G(L)->profilehooks.state_change != NULL)
++
++#define luaP_enterstate(L,guard,state,cfunction) \
++  { (guard)->active = 0; \
++    if (l_unlikely(luaP_stateenabled(L))) \
++      luaP_enterstate_(L, guard, state, cfunction); }
++
++#define luaP_leavestate(L,guard) \
++  { if (l_unlikely((guard)->active || luaP_stateenabled(L))) \
++      luaP_leavestate_(L, guard); }
++
++#define luaP_leaveframe(L,guard,previous) \
++  { if (l_unlikely((guard)->active || luaP_stateenabled(L))) \
++      luaP_leaveframe_(L, guard, previous); }
++
++#define luaP_safepoint(L) \
++  { global_State *g__ = G(L); \
++    if (l_unlikely(g__->profilehooks.safe_point != NULL && \
++                   luaP_loadpending(g__) != 0)) \
++      luaP_safepoint_(L, pc); }
++
++#define luaP_allocation(L,oldp,newp,olds,news,success) \
++  { if (((oldp) != NULL || (news) != 0) && \
++        l_unlikely(G(L)->profilehooks.allocation != NULL)) \
++      luaP_allocation_(L, oldp, newp, olds, news, success); }
++
++#define luaP_initthread(L) \
++  { (L)->profilestate = LUA_PROFILE_HOST; \
++    (L)->profilecaptureblocked = 0; \
++    (L)->profilecfunction = NULL; }
++
++#define luaP_initglobal(g) \
++  { memset(&(g)->profilehooks, 0, sizeof((g)->profilehooks)); \
++    (g)->ud_profile = NULL; \
++    (g)->profilethread = NULL; \
++    (g)->profilepending = 0; \
++    (g)->profileincallback = 0; }
++
++#define luaP_blockcapture(L)    ((L)->profilecaptureblocked = 1)
++#define luaP_unblockcapture(L)  ((L)->profilecaptureblocked = 0)
++
++#else
++
++#define luaP_stateguard(name)  ((void)0)
++#define luaP_enterstate(L,guard,state,cfunction)  ((void)0)
++#define luaP_leavestate(L,guard)                  ((void)0)
++#define luaP_leaveframe(L,guard,previous)         ((void)0)
++#define luaP_syncstate(L)                         ((void)0)
++#define luaP_sethoststate(L)                      ((void)0)
++#define luaP_safepoint(L)                         ((void)0)
++#define luaP_allocation(L,oldp,newp,olds,news,success)  ((void)0)
++#define luaP_initthread(L)                        ((void)0)
++#define luaP_initglobal(g)                        ((void)0)
++#define luaP_blockcapture(L)                      ((void)0)
++#define luaP_unblockcapture(L)                    ((void)0)
++
++#endif
++
++#endif
+diff --git a/3rd/lua/lstate.c b/3rd/lua/lstate.c
+index 70a11aaec649b54f52af3a8cf02edcefe48902e3..6a04789858e446c8bcf42fde24195960f7134501 100644
+--- a/3rd/lua/lstate.c
++++ b/3rd/lua/lstate.c
+@@ -22,6 +22,7 @@
+ #include "lgc.h"
+ #include "llex.h"
+ #include "lmem.h"
++#include "lprofile.h"
+ #include "lstate.h"
+ #include "lstring.h"
+ #include "ltable.h"
+@@ -239,6 +240,7 @@ static void preinit_thread (lua_State *L, global_State *g) {
+   L->status = LUA_OK;
+   L->errfunc = 0;
+   L->oldpc = 0;
++  luaP_initthread(L);
+   L->base_ci.previous = L->base_ci.next = NULL;
+ }
+ 
+@@ -266,6 +268,7 @@ static void close_state (lua_State *L) {
+   luaM_freearray(L, G(L)->strt.hash, cast_sizet(G(L)->strt.size));
+   freestack(L);
+   lua_assert(gettotalbytes(g) == sizeof(global_State));
++  luaP_allocation(L, g, NULL, sizeof(global_State), 0, 1);
+   (*g->frealloc)(g->ud, g, sizeof(global_State), 0);  /* free main block */
+ }
+ 
+@@ -326,6 +329,9 @@ LUA_API int lua_closethread (lua_State *L, lua_State *from) {
+   lua_lock(L);
+   L->nCcalls = (from) ? getCcalls(from) : 0;
+   status = luaE_resetthread(L, L->status);
++  luaP_sethoststate(L);
++  if (from != NULL && from != L)
++    luaP_syncstate(from);
+   if (L == from)  /* closing itself? */
+     luaD_throwbaselevel(L, status);
+   lua_unlock(L);
+@@ -351,6 +357,7 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud, unsigned seed) {
+   g->ud = ud;
+   g->warnf = NULL;
+   g->ud_warn = NULL;
++  luaP_initglobal(g);
+   g->seed = seed;
+   g->gcstp = GCSTPGC;  /* no GC while building state */
+   g->strt.size = g->strt.nuse = 0;
+@@ -417,4 +424,3 @@ void luaE_warnerror (lua_State *L, const char *where) {
+   luaE_warning(L, msg, 1);
+   luaE_warning(L, ")", 0);
+ }
+-
+diff --git a/3rd/lua/lstate.h b/3rd/lua/lstate.h
+index 20dc4d24f0359c9d78647fc2d8641527a0e4eab3..c68dc1c3b11f87020517706c7c0d693146c5506c 100644
+--- a/3rd/lua/lstate.h
++++ b/3rd/lua/lstate.h
+@@ -305,6 +305,11 @@ struct lua_State {
+   int basehookcount;
+   int hookcount;
+   volatile l_signalT hookmask;
++#if defined(LUA_USE_LUAPROF)
++  lu_byte profilestate;
++  lu_byte profilecaptureblocked;
++  lua_CFunction profilecfunction;
++#endif
+   struct {  /* info about transferred values (for call/return hooks) */
+     int ftransfer;  /* offset of first value transferred */
+     int ntransfer;  /* number of values transferred */
+@@ -368,6 +373,13 @@ typedef struct global_State {
+   TString *strcache[STRCACHE_N][STRCACHE_M];  /* cache for strings in API */
+   lua_WarnFunction warnf;  /* warning function */
+   void *ud_warn;         /* auxiliary data to 'warnf' */
++#if defined(LUA_USE_LUAPROF)
++  lua_ProfileHooks profilehooks;
++  void *ud_profile;
++  lua_State *profilethread;
++  unsigned int profilepending;
++  lu_byte profileincallback;
++#endif
+   LX mainth;  /* main thread of this state */
+ } global_State;
+ 
+@@ -448,4 +460,3 @@ LUAI_FUNC TStatus luaE_resetthread (lua_State *L, TStatus status);
+ 
+ 
+ #endif
+-
+diff --git a/3rd/lua/lua.h b/3rd/lua/lua.h
+index eeb55f74f742c5299f27db3b45f218504069bb20..512125d5c2d5aad9d1e2d9aee072292ef9643605 100644
+--- a/3rd/lua/lua.h
++++ b/3rd/lua/lua.h
+@@ -143,6 +143,59 @@ typedef struct lua_Debug lua_Debug;
+ typedef void (*lua_Hook) (lua_State *L, lua_Debug *ar);
+ 
+ 
++#if defined(LUA_USE_LUAPROF)
++/*
++** Functions used by sampling profilers at VM-safe boundaries.
++** Callbacks must not call Lua, allocate through Lua, or raise errors.
++** Safe-point and allocation callbacks may call
++** 'lua_profile_capturestack'. During an allocation that moves the Lua stack,
++** capture returns no frames and reports truncation.
++*/
++#define LUA_PROFILE_ABI_VERSION  2
++
++#define LUA_PROFILE_HOST  0
++#define LUA_PROFILE_LUA   1
++#define LUA_PROFILE_C     2
++#define LUA_PROFILE_GC    3
++
++#define LUA_PROFILE_FRAME_LUA  0
++#define LUA_PROFILE_FRAME_C    1
++
++typedef struct lua_ProfileAllocEvent {
++  void *old_pointer;
++  void *new_pointer;
++  size_t old_size;
++  size_t new_size;
++  unsigned char success;
++} lua_ProfileAllocEvent;
++
++typedef struct lua_ProfileFrame {
++  const void *function;
++  const char *source;
++  size_t source_length;
++  const char *name;
++  size_t name_length;
++  lua_CFunction cfunction;
++  int linedefined;
++  int currentline;
++  unsigned char kind;
++} lua_ProfileFrame;
++
++typedef void (*lua_ProfileSafePoint) (void *ud, lua_State *L,
++                                      unsigned int pending);
++typedef void (*lua_ProfileStateChange) (void *ud, lua_State *L, int state,
++                                        lua_CFunction cfunction);
++typedef void (*lua_ProfileAllocation) (void *ud, lua_State *L,
++                                       const lua_ProfileAllocEvent *event);
++
++typedef struct lua_ProfileHooks {
++  lua_ProfileSafePoint safe_point;
++  lua_ProfileStateChange state_change;
++  lua_ProfileAllocation allocation;
++} lua_ProfileHooks;
++#endif
++
++
+ /*
+ ** generic extra include file
+ */
+@@ -170,6 +223,18 @@ LUA_API lua_CFunction (lua_atpanic) (lua_State *L, lua_CFunction panicf);
+ 
+ LUA_API lua_Number (lua_version) (lua_State *L);
+ 
++#if defined(LUA_USE_LUAPROF)
++LUA_API void (lua_setprofilehooks) (lua_State *L,
++                                    const lua_ProfileHooks *hooks, void *ud);
++LUA_API void (lua_profile_request) (lua_State *L, unsigned int count);
++LUA_API int (lua_getprofilestate) (lua_State *L,
++                                   lua_CFunction *cfunction);
++LUA_API size_t (lua_profile_capturestack) (lua_State *L,
++                                           lua_ProfileFrame *frames,
++                                           size_t capacity,
++                                           int *truncated);
++#endif
++
+ 
+ /*
+ ** basic stack manipulation
+diff --git a/3rd/lua/lvm.c b/3rd/lua/lvm.c
+index 719576410d76023c69c7aa7d3b9c99c8d3940b39..440b02e736bb47f9ae83e406f542ade501615e90 100644
+--- a/3rd/lua/lvm.c
++++ b/3rd/lua/lvm.c
+@@ -25,6 +25,7 @@
+ #include "lgc.h"
+ #include "lobject.h"
+ #include "lopcodes.h"
++#include "lprofile.h"
+ #include "lstate.h"
+ #include "lstring.h"
+ #include "ltable.h"
+@@ -1185,6 +1186,7 @@ void luaV_finishOp (lua_State *L) {
+ 
+ /* fetch an instruction and prepare its execution */
+ #define vmfetch()	{ \
++  luaP_safepoint(L); \
+   if (l_unlikely(trap)) {  /* stack reallocation or hooks? */ \
+     trap = luaG_traceexec(L, pc);  /* handle hooks */ \
+     updatebase(ci);  /* correct stack */ \
+@@ -1203,9 +1205,11 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+   StkId base;
+   const Instruction *pc;
+   int trap;
++  luaP_stateguard(profileguard);
+ #if LUA_USE_JUMPTABLE
+ #include "ljumptab.h"
+ #endif
++  luaP_enterstate(L, &profileguard, LUA_PROFILE_LUA, NULL);
+  startfunc:
+   trap = L->hookmask;
+  returning:  /* trap already set */
+@@ -1823,8 +1827,10 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+           }
+         }
+        ret:  /* return from a Lua function */
+-        if (ci->callstatus & CIST_FRESH)
++        if (ci->callstatus & CIST_FRESH) {
++          luaP_leaveframe(L, &profileguard, ci->previous);
+           return;  /* end this frame */
++        }
+         else {
+           ci = ci->previous;
+           goto returning;  /* continue running caller in this frame */
+diff --git a/3rd/lua/makefile b/3rd/lua/makefile
+index 2b5f76f71be1e8867197a1b7ae97246e15bc75f4..b3fe904eea0e25e4ab0cfb15c62be553770abde7 100644
+--- a/3rd/lua/makefile
++++ b/3rd/lua/makefile
+@@ -7,7 +7,7 @@
+ PLAT= guess
+ 
+ CC= gcc -std=gnu99
+-CFLAGS= -O2 -Wall -Wextra $(SYSCFLAGS) $(MYCFLAGS)
++CFLAGS= -O2 -Wall -Wextra $(SYSCFLAGS) $(MYCFLAGS) $(LUAPROF_CFLAGS)
+ LDFLAGS= $(SYSLDFLAGS) $(MYLDFLAGS)
+ LIBS= -lm $(SYSLIBS) $(MYLIBS)
+ 
+@@ -25,6 +25,15 @@ MYLDFLAGS=
+ MYLIBS=
+ MYOBJS=
+ 
++LUAPROF?= 0
++ifeq ($(LUAPROF),1)
++LUAPROF_CFLAGS= -DLUA_USE_LUAPROF
++LUAPROF_O= lprofile.o
++else
++LUAPROF_CFLAGS=
++LUAPROF_O=
++endif
++
+ # Special flags for compiler modules; -Os reduces code size.
+ CMCFLAGS= 
+ 
+@@ -33,7 +42,7 @@ CMCFLAGS=
+ PLATS= guess aix bsd c89 freebsd generic ios linux macosx mingw posix solaris openbsd
+ 
+ LUA_A=	liblua.a
+-CORE_O=	lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o
++CORE_O=	lapi.o lcode.o lctype.o ldebug.o ldo.o ldump.o lfunc.o lgc.o llex.o lmem.o lobject.o lopcodes.o lparser.o $(LUAPROF_O) lstate.o lstring.o ltable.o ltm.o lundump.o lvm.o lzio.o
+ LIB_O=	lauxlib.o lbaselib.o lcorolib.o ldblib.o liolib.o lmathlib.o loadlib.o loslib.o lstrlib.o ltablib.o lutf8lib.o linit.o
+ BASE_O= $(CORE_O) $(LIB_O) $(MYOBJS)
+ 
+@@ -70,7 +79,7 @@ test:
+ 	./$(LUA_T) -v
+ 
+ clean:
+-	$(RM) $(ALL_T) $(ALL_O)
++	$(RM) $(ALL_T) $(ALL_O) lprofile.o
+ 
+ depend:
+ 	@$(CC) $(CFLAGS) -MM l*.c
+@@ -171,13 +180,14 @@ ldebug.o: ldebug.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
+  ldebug.h ldo.h lfunc.h lstring.h lgc.h ltable.h lvm.h
+ ldo.o: ldo.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
+  lobject.h ltm.h lzio.h lmem.h ldebug.h ldo.h lfunc.h lgc.h lopcodes.h \
+- lparser.h lstring.h ltable.h lundump.h lvm.h
++ lparser.h lprofile.h lstring.h ltable.h lundump.h lvm.h
+ ldump.o: ldump.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
+  lobject.h ltm.h lzio.h lmem.h lgc.h ltable.h lundump.h
+ lfunc.o: lfunc.c lprefix.h lua.h luaconf.h ldebug.h lstate.h lobject.h \
+  llimits.h ltm.h lzio.h lmem.h ldo.h lfunc.h lgc.h
+ lgc.o: lgc.c lprefix.h lua.h luaconf.h ldebug.h lstate.h lobject.h \
+- llimits.h ltm.h lzio.h lmem.h ldo.h lfunc.h lgc.h lstring.h ltable.h
++ llimits.h ltm.h lzio.h lmem.h ldo.h lfunc.h lgc.h lprofile.h lstring.h \
++ ltable.h
+ linit.o: linit.c lprefix.h lua.h luaconf.h lualib.h lauxlib.h llimits.h
+ liolib.o: liolib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h llimits.h
+ llex.o: llex.c lprefix.h lua.h luaconf.h lctype.h llimits.h ldebug.h \
+@@ -186,7 +196,7 @@ llex.o: llex.c lprefix.h lua.h luaconf.h lctype.h llimits.h ldebug.h \
+ lmathlib.o: lmathlib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h \
+  llimits.h
+ lmem.o: lmem.c lprefix.h lua.h luaconf.h ldebug.h lstate.h lobject.h \
+- llimits.h ltm.h lzio.h lmem.h ldo.h lgc.h
++ llimits.h ltm.h lzio.h lmem.h ldo.h lgc.h lprofile.h
+ loadlib.o: loadlib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h \
+  llimits.h
+ lobject.o: lobject.c lprefix.h lua.h luaconf.h lctype.h llimits.h \
+@@ -198,9 +208,11 @@ loslib.o: loslib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h llimits.h
+ lparser.o: lparser.c lprefix.h lua.h luaconf.h lcode.h llex.h lobject.h \
+  llimits.h lzio.h lmem.h lopcodes.h lparser.h ldebug.h lstate.h ltm.h \
+  ldo.h lfunc.h lstring.h lgc.h ltable.h
++lprofile.o: lprofile.c lprefix.h lua.h luaconf.h lapi.h llimits.h \
++ lstate.h lobject.h ltm.h lzio.h ldebug.h lprofile.h
+ lstate.o: lstate.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
+  lobject.h ltm.h lzio.h lmem.h ldebug.h ldo.h lfunc.h lgc.h llex.h \
+- lstring.h ltable.h
++ lprofile.h lstring.h ltable.h
+ lstring.o: lstring.c lprefix.h lua.h luaconf.h ldebug.h lstate.h \
+  lobject.h llimits.h ltm.h lzio.h lmem.h ldo.h lstring.h lgc.h
+ lstrlib.o: lstrlib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h \
+@@ -222,7 +234,7 @@ lutf8lib.o: lutf8lib.c lprefix.h lua.h luaconf.h lauxlib.h lualib.h \
+  llimits.h
+ lvm.o: lvm.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
+  lobject.h ltm.h lzio.h lmem.h ldebug.h ldo.h lfunc.h lgc.h lopcodes.h \
+- lstring.h ltable.h lvm.h ljumptab.h
++ lprofile.h lstring.h ltable.h lvm.h ljumptab.h
+ lzio.o: lzio.c lprefix.h lua.h luaconf.h lapi.h llimits.h lstate.h \
+  lobject.h ltm.h lzio.h lmem.h
+ 
+diff --git a/3rd/lua/onelua.c b/3rd/lua/onelua.c
+index e7171213911db2d13327db43aacdac07baf339a7..90415ebbbb4a34d7b67d47343676e10581862a84 100644
+--- a/3rd/lua/onelua.c
++++ b/3rd/lua/onelua.c
+@@ -93,6 +93,9 @@
+ #include "lcode.c"
+ #include "lparser.c"
+ #include "ldebug.c"
++#if defined(LUA_USE_LUAPROF)
++#include "lprofile.c"
++#endif
+ #include "lfunc.c"
+ #include "lobject.c"
+ #include "ltm.c"
+diff --git a/Makefile b/Makefile
+index f2f8b4624234967efbf93a767183c6ff30a60249..1f5e0cfc50193c0ccca24a34c9934b2b327a9be5 100644
+--- a/Makefile
++++ b/Makefile
+@@ -13,9 +13,22 @@ CFLAGS = -g -O2 -Wall -I$(LUA_INC) $(MYCFLAGS)
+ LUA_STATICLIB := 3rd/lua/liblua.a
+ LUA_LIB ?= $(LUA_STATICLIB)
+ LUA_INC ?= 3rd/lua
++LUAPROF ?= 0
++LUAPROF_HOST_LIB ?=
++LUAPROF_INC ?=
++
++ifeq ($(LUAPROF),1)
++LUAPROF_LUA_ARGS := LUAPROF=1
++LUAPROF_SKYNET_DEFINES := -DSKYNET_LUAPROF $(if $(strip $(LUAPROF_INC)),-I$(LUAPROF_INC))
++LUAPROF_LINK := $(LUAPROF_HOST_LIB)
++else
++LUAPROF_LUA_ARGS :=
++LUAPROF_SKYNET_DEFINES :=
++LUAPROF_LINK :=
++endif
+ 
+ $(LUA_STATICLIB) :
+-	cd 3rd/lua && $(MAKE) CC='$(CC) -std=gnu99' $(PLAT)
++	cd 3rd/lua && $(MAKE) CC='$(CC) -std=gnu99' $(PLAT) $(LUAPROF_LUA_ARGS)
+ 
+ # https : turn on TLS_MODULE to add https support
+ 
+@@ -81,8 +94,8 @@ all : \
+   $(foreach v, $(CSERVICE), $(CSERVICE_PATH)/$(v).so) \
+   $(foreach v, $(LUA_CLIB), $(LUA_CLIB_PATH)/$(v).so)
+ 
+-$(SKYNET_BUILD_PATH)/skynet : $(foreach v, $(SKYNET_SRC), skynet-src/$(v)) $(LUA_LIB) $(MALLOC_STATICLIB)
+-	$(CC) $(CFLAGS) -o $@ $^ -Iskynet-src -I$(JEMALLOC_INC) $(LDFLAGS) $(EXPORT) $(SKYNET_LIBS) $(SKYNET_DEFINES)
++$(SKYNET_BUILD_PATH)/skynet : $(foreach v, $(SKYNET_SRC), skynet-src/$(v)) $(LUAPROF_LINK) $(LUA_LIB) $(MALLOC_STATICLIB)
++	$(CC) $(CFLAGS) -o $@ $^ -Iskynet-src -I$(JEMALLOC_INC) $(LDFLAGS) $(EXPORT) $(SKYNET_LIBS) $(SKYNET_DEFINES) $(LUAPROF_SKYNET_DEFINES)
+ 
+ $(LUA_CLIB_PATH) :
+ 	mkdir $(LUA_CLIB_PATH)
+@@ -91,32 +104,32 @@ $(CSERVICE_PATH) :
+ 	mkdir $(CSERVICE_PATH)
+ 
+ define CSERVICE_TEMP
+-  $$(CSERVICE_PATH)/$(1).so : service-src/service_$(1).c | $$(CSERVICE_PATH)
++  $$(CSERVICE_PATH)/$(1).so : service-src/service_$(1).c $$(LUA_STATICLIB) | $$(CSERVICE_PATH)
+ 	$$(CC) $$(CFLAGS) $$(SHARED) $$< -o $$@ -Iskynet-src
+ endef
+ 
+ $(foreach v, $(CSERVICE), $(eval $(call CSERVICE_TEMP,$(v))))
+ 
+-$(LUA_CLIB_PATH)/skynet.so : $(addprefix lualib-src/,$(LUA_CLIB_SKYNET)) | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ -Iskynet-src -Iservice-src -Ilualib-src
++$(LUA_CLIB_PATH)/skynet.so : $(addprefix lualib-src/,$(LUA_CLIB_SKYNET)) $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) $(filter %.c,$^) -o $@ -Iskynet-src -Iservice-src -Ilualib-src
+ 
+-$(LUA_CLIB_PATH)/bson.so : lualib-src/lua-bson.c | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) -Iskynet-src $^ -o $@
++$(LUA_CLIB_PATH)/bson.so : lualib-src/lua-bson.c $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) -Iskynet-src $(filter %.c,$^) -o $@
+ 
+-$(LUA_CLIB_PATH)/md5.so : 3rd/lua-md5/md5.c 3rd/lua-md5/md5lib.c 3rd/lua-md5/compat-5.2.c | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) -I3rd/lua-md5 $^ -o $@
++$(LUA_CLIB_PATH)/md5.so : 3rd/lua-md5/md5.c 3rd/lua-md5/md5lib.c 3rd/lua-md5/compat-5.2.c $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) -I3rd/lua-md5 $(filter %.c,$^) -o $@
+ 
+-$(LUA_CLIB_PATH)/client.so : lualib-src/lua-clientsocket.c lualib-src/lua-crypt.c lualib-src/lsha1.c | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) $^ -o $@ -lpthread
++$(LUA_CLIB_PATH)/client.so : lualib-src/lua-clientsocket.c lualib-src/lua-crypt.c lualib-src/lsha1.c $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) $(filter %.c,$^) -o $@ -lpthread
+ 
+-$(LUA_CLIB_PATH)/sproto.so : lualib-src/sproto/sproto.c lualib-src/sproto/lsproto.c | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) -Ilualib-src/sproto $^ -o $@
++$(LUA_CLIB_PATH)/sproto.so : lualib-src/sproto/sproto.c lualib-src/sproto/lsproto.c $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) -Ilualib-src/sproto $(filter %.c,$^) -o $@
+ 
+-$(LUA_CLIB_PATH)/ltls.so : lualib-src/ltls.c | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) -Iskynet-src -L$(TLS_LIB) -I$(TLS_INC) $^ -o $@ -lssl -lcrypto
++$(LUA_CLIB_PATH)/ltls.so : lualib-src/ltls.c $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) -Iskynet-src -L$(TLS_LIB) -I$(TLS_INC) $(filter %.c,$^) -o $@ -lssl -lcrypto
+ 
+-$(LUA_CLIB_PATH)/lpeg.so : 3rd/lpeg/lpcap.c 3rd/lpeg/lpcode.c 3rd/lpeg/lpprint.c 3rd/lpeg/lptree.c 3rd/lpeg/lpvm.c 3rd/lpeg/lpcset.c | $(LUA_CLIB_PATH)
+-	$(CC) $(CFLAGS) $(SHARED) -I3rd/lpeg $^ -o $@
++$(LUA_CLIB_PATH)/lpeg.so : 3rd/lpeg/lpcap.c 3rd/lpeg/lpcode.c 3rd/lpeg/lpprint.c 3rd/lpeg/lptree.c 3rd/lpeg/lpvm.c 3rd/lpeg/lpcset.c $(LUA_STATICLIB) | $(LUA_CLIB_PATH)
++	$(CC) $(CFLAGS) $(SHARED) -I3rd/lpeg $(filter %.c,$^) -o $@
+ 
+ clean :
+ 	rm -f $(SKYNET_BUILD_PATH)/skynet $(CSERVICE_PATH)/*.so $(LUA_CLIB_PATH)/*.so && \
+@@ -129,4 +142,4 @@ ifneq (,$(wildcard 3rd/jemalloc/Makefile))
+ endif
+ 	cd 3rd/lua && $(MAKE) clean
+ 	rm -f $(LUA_STATICLIB)
+-	$(MAKE) cleanall -f mingw.mk
+\ No newline at end of file
++	$(MAKE) cleanall -f mingw.mk
+diff --git a/skynet-src/skynet_server.c b/skynet-src/skynet_server.c
+index 782abffacbafb9593f30a5645b2aeab51c3b5c5d..99868cb985a7618d388fecd53168d80eb8453deb 100644
+--- a/skynet-src/skynet_server.c
++++ b/skynet-src/skynet_server.c
+@@ -13,6 +13,10 @@
+ #include "spinlock.h"
+ #include "atomic.h"
+ 
++#ifdef SKYNET_LUAPROF
++#include "luaprof/skynet_host.h"
++#endif
++
+ #include <pthread.h>
+ 
+ #include <string.h>
+@@ -265,6 +269,9 @@ dispatch_message(struct skynet_context *ctx, struct skynet_message *msg) {
+ 	}
+ 	++ctx->message_count;
+ 	int reserve_msg;
++#ifdef SKYNET_LUAPROF
++	lp_skynet_host_dispatch_enter(ctx->handle);
++#endif
+ 	if (ctx->profile) {
+ 		ctx->cpu_start = skynet_thread_time();
+ 		reserve_msg = ctx->cb(ctx, ctx->cb_ud, type, msg->session, msg->source, msg->data, sz);
+@@ -273,6 +280,9 @@ dispatch_message(struct skynet_context *ctx, struct skynet_message *msg) {
+ 	} else {
+ 		reserve_msg = ctx->cb(ctx, ctx->cb_ud, type, msg->session, msg->source, msg->data, sz);
+ 	}
++#ifdef SKYNET_LUAPROF
++	lp_skynet_host_dispatch_leave();
++#endif
+ 	if (!reserve_msg) {
+ 		skynet_free(msg->data);
+ 	}
+diff --git a/skynet-src/skynet_start.c b/skynet-src/skynet_start.c
+index d3e84d7a73766c2e2e18d6a2f6ea340e76afcbbc..74bd1a1ab4342416c74eac0374abe14a51e1c5ca 100644
+--- a/skynet-src/skynet_start.c
++++ b/skynet-src/skynet_start.c
+@@ -10,6 +10,10 @@
+ #include "skynet_daemon.h"
+ #include "skynet_harbor.h"
+ 
++#ifdef SKYNET_LUAPROF
++#include "luaprof/skynet_host.h"
++#endif
++
+ #include <pthread.h>
+ #include <unistd.h>
+ #include <assert.h>
+@@ -162,6 +166,9 @@ thread_worker(void *p) {
+ 	struct skynet_monitor *sm = m->m[id];
+ 	skynet_initthread(THREAD_WORKER);
+ 	skynet_handle_register_thread();
++#ifdef SKYNET_LUAPROF
++	lp_skynet_host_worker_start((unsigned int)id);
++#endif
+ 	struct message_queue * q = NULL;
+ 	while (!m->quit) {
+ 		q = skynet_context_message_dispatch(sm, q, weight);
+@@ -180,6 +187,9 @@ thread_worker(void *p) {
+ 			}
+ 		}
+ 	}
++#ifdef SKYNET_LUAPROF
++	lp_skynet_host_worker_stop();
++#endif
+ 	return NULL;
+ }
+ 

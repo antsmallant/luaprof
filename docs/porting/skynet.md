@@ -1,15 +1,16 @@
 # 向 Skynet 应用 luaprof patch
 
-[接入指南](../integration.md) | [Lua 5.4](lua-5.4.md) | [Lua 5.5](lua-5.5.md)
+[预生成 patch](../../patches/README.md) | [接入指南](../integration.md) |
+[Lua 5.4](lua-5.4.md) | [Lua 5.5](lua-5.5.md)
 
-本文只说明如何生成、应用和验证固定 Skynet fork 的 patch。该 patch 同时包含 Skynet
+本文只说明如何应用和验证固定 Skynet fork 的 patch。该 patch 同时包含 Skynet
 内嵌 Lua bridge 和 scheduler/host 集成，不能拆成互不相关的两部分使用。
 
 ## 1. 适用基线
 
 ```text
 baseline: f19d160
-target:   integration/skynet 当前 HEAD
+target:   5606145
 bridge:   LUA_PROFILE_ABI_VERSION == 2
 module:   customized Lua 5.5, LUAPROF_EXPECT_LUA_VERSION == 505
 ```
@@ -18,21 +19,20 @@ module:   customized Lua 5.5, LUAPROF_EXPECT_LUA_VERSION == 505
 作为差异参考，不能视为已经验证兼容。不要使用父项目的 PUC Lua 替换 Skynet 自带的
 `3rd/lua`。
 
-## 2. 生成和应用
+## 2. 应用
 
-在 `luaprof` 根目录执行：
+直接使用仓库中已提交的完整 patch：
 
 ```sh
-./scripts/generate-porting-patch.sh skynet > /tmp/luaprof-skynet.patch
-git apply --stat /tmp/luaprof-skynet.patch
-git -C /path/to/your-skynet apply --check /tmp/luaprof-skynet.patch
-git -C /path/to/your-skynet apply /tmp/luaprof-skynet.patch
+git apply --stat /path/to/luaprof/patches/skynet.patch
+git -C /path/to/your-skynet apply --check \
+    /path/to/luaprof/patches/skynet.patch
+git -C /path/to/your-skynet apply \
+    /path/to/luaprof/patches/skynet.patch
 ```
 
-生成器只固定 baseline，终点始终是 `integration/skynet` 当前本地 `HEAD`。它对仓库根
-目录 `-- .` 生成 binary/full-index diff，所以以后新增 embedded Lua、host 或 scheduler
-修改文件时不需要维护 target hash 和文件清单。脚本不会 fetch 远端，并会拒绝包含未提交
-的 tracked 修改。
+该文件随 `luaprof` 仓库提交，不需要初始化 submodule。维护者更新方式见
+[维护者指南](../maintainer-guide.md)。
 
 目标 fork 已经修改相同路径时，先检查冲突，不要部分应用。Skynet service 会跨 worker
 迁移，缺少 host 或 scheduler 部分即使能够编译，也不能得到正确的 service CPU profile。
@@ -77,8 +77,9 @@ make test-skynet
 make example-skynet
 ```
 
-`test-porting-patches` 会确认生成结果非空，并能在当前 Skynet `HEAD` 上 reverse
-apply-check。真实项目至少使用两个 worker，让目标 service 主动 yield/迁移，并确认
+`test-porting-patches` 会确认已提交 patch 与当前固定 fork 完全一致，并分别通过
+baseline forward 和 target reverse apply-check。真实项目至少使用两个 worker，让目标
+service 主动 yield/迁移，并确认
 profile metadata 的 `scheduler_workers > 0`。同时检查 CPU/heap profile 能被标准
 `go tool pprof` 读取。
 
