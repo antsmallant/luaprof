@@ -205,6 +205,22 @@ go tool pprof -sample_index=inuse_space -svg heap.pb.gz > heap.svg
 go tool pprof -http=:0 heap.pb.gz
 ```
 
+`go tool pprof -svg` 生成的是调用图。若需要从已保存 `.pb.gz` 直接生成可提交、可嵌入
+GitHub 的静态 SVG 火焰图，先构建本仓库工具：
+
+```sh
+make pprof-flamegraph
+build/pprof-flamegraph --output cpu-flame.svg cpu.pb.gz
+build/pprof-flamegraph --sample=inuse_space --output heap-flame.svg heap.pb.gz
+```
+
+工具默认使用 profile 中标记的 default sample type；memory profile 应按结论显式选择
+`alloc_space`、`inuse_space`、`alloc_objects` 或 `inuse_objects`。图的宽度表示所选指标的
+inclusive value，横向位置不表示时间顺序。输出不包含脚本，可由浏览器或 GitHub 直接渲染。
+这条路径只读取既有 profile，不要求采集时额外调用 `result:write(..., { format = "folded" })`。
+该可选工具使用 Go 1.24+ 和 `github.com/google/pprof/profile` 解析标准 profile.proto，不需要
+Graphviz、Perl 或额外的 flame graph 工具。
+
 默认 `-top` 按函数聚合，`-lines -top` 按实际执行行拆分，`-list` 把采样权重标到源码
 行。Lua frame 的函数名、定义行和当前执行行是独立数据；调用名是 VM 在采样点能推断的
 best-effort 名称，匿名调用无法推断时回退到 source/definition line。
@@ -216,7 +232,7 @@ go tool pprof -source_path=examples/skynet \
     -list=calculate_orders build/skynet-cpu.pb.gz
 ```
 
-还可以为 flame graph 工具导出 root-to-leaf folded stack：
+还可以为其他 flame graph 工具导出 root-to-leaf folded stack：
 
 ```lua
 assert(memory_result:write("heap.folded", {

@@ -1,5 +1,7 @@
 ROOT := $(abspath .)
 BUILD_DIR := $(ROOT)/build
+PPROF_FLAMEGRAPH_DIR := $(ROOT)/tools/pprof-flamegraph
+PPROF_FLAMEGRAPH := $(BUILD_DIR)/pprof-flamegraph
 LUA46_BUILD_DIR := $(BUILD_DIR)/lua46
 LUA55_BUILD_DIR := $(BUILD_DIR)/lua55
 SKYNET_BUILD_DIR := $(BUILD_DIR)/skynet
@@ -102,7 +104,7 @@ LUA_PLATFORM ?= linux
 
 override CPPFLAGS += -DLUA_USE_LUAPROF
 
-.PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-feature-gates test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-lua-symbols test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-porting-patches test-pprof-exporter test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
+.PHONY: all bench-combined bench-disabled bench-lua55-combined bench-lua55-vm bench-memory bench-skynet-combined bench-skynet-vm bench-vm example-lua55 example-skynet example-thread-vm lua lua55 module module-lua55 pprof-flamegraph skynet skynet-lua skynet-module submodule-lua submodule-lua55 submodule-skynet test test-all test-api test-combined-sampling test-cpu-core test-cpu-sampling test-feature-gates test-lua-symbols test-lua55 test-lua55-api test-lua55-boundary test-lua55-combined-sampling test-lua55-cpu-sampling test-lua55-memory-sampling test-lua55-thread-vm test-lua55-vm-bridge test-memory-core test-memory-sampling test-porting-patches test-pprof-exporter test-pprof-flamegraph test-runtime test-scheduler-sampling test-thread-vm test-vm-bridge test-skynet thread-vm
 .PHONY: bench-lua46-combined bench-lua46-vm example-lua46 lua46 module-lua46 submodule-lua46 test-lua46 test-lua46-api test-lua46-combined-sampling test-lua46-cpu-sampling test-lua46-lua-symbols test-lua46-memory-sampling test-lua46-thread-vm test-lua46-vm-bridge update-porting-patches
 
 all: thread-vm module
@@ -148,6 +150,9 @@ $(LUA55_BUILD_DIR):
 
 $(SKYNET_BUILD_DIR):
 	mkdir -p $@
+
+$(PPROF_FLAMEGRAPH): $(PPROF_FLAMEGRAPH_DIR)/go.mod $(PPROF_FLAMEGRAPH_DIR)/go.sum $(PPROF_FLAMEGRAPH_DIR)/main.go | $(BUILD_DIR)
+	cd $(PPROF_FLAMEGRAPH_DIR) && go build -o $@ .
 
 $(BUILD_DIR)/thread-vm-smoke: examples/thread_vm/main.c $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
@@ -467,7 +472,7 @@ example-lua55: module-lua55
 
 test: test-thread-vm test-runtime test-cpu-core test-memory-core test-lua-symbols test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
-test-all: test test-lua46 test-lua55 test-skynet test-porting-patches test-feature-gates
+test-all: test test-lua46 test-lua55 test-skynet test-porting-patches test-feature-gates test-pprof-flamegraph
 
 test-feature-gates: submodule-lua submodule-lua46 submodule-lua55 submodule-skynet
 	./tests/integration/feature_gates.sh
@@ -511,6 +516,12 @@ test-lua55-lua-symbols: $(LUA55_LUA_SYMBOLS_TEST)
 
 test-pprof-exporter: $(PPROF_EXPORTER_TEST)
 	$(PPROF_EXPORTER_TEST)
+
+pprof-flamegraph: $(PPROF_FLAMEGRAPH)
+
+test-pprof-flamegraph: $(PPROF_FLAMEGRAPH) example-thread-vm example-skynet
+	cd $(PPROF_FLAMEGRAPH_DIR) && go test ./...
+	./tests/integration/pprof_flamegraph.sh $(PPROF_FLAMEGRAPH)
 
 test-api: module
 	LUA_CPATH="$(BUILD_DIR)/?.so;;" $(LUA_SRC)/lua tests/lua/api_test.lua

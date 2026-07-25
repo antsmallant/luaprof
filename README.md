@@ -1,7 +1,8 @@
 # luaprof
 
 `luaprof` 是面向 Lua 的 Linux sampling profiler。CPU 与 memory recorder 相互独立，
-结果输出为标准 pprof profile，可以直接使用 `go tool pprof` 分析。
+结果输出为标准 pprof profile，可以直接使用 `go tool pprof` 分析，也可从已保存的
+`.pb.gz` 直接生成静态 SVG 火焰图。
 
 - **CPU**：按线程 CPU time 采样，归因到 Lua 函数、Lua 调用的 CFunction 与 GC。
 - **Memory**：按分配字节随机采样，同时提供 `alloc_*` 与可选的 `inuse_*` 统计。
