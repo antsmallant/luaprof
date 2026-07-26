@@ -221,6 +221,17 @@ inclusive value，横向位置不表示时间顺序。输出不包含脚本，�
 该可选工具使用 Go 1.24+ 和 `github.com/google/pprof/profile` 解析标准 profile.proto，不需要
 Graphviz、Perl 或额外的 flame graph 工具。
 
+默认 SVG 特意不含脚本，适合作为 GitHub 图片或报告附件。需要在浏览器本地分析时加入
+`--interactive`：
+
+```sh
+build/pprof-flamegraph --interactive --output cpu-flame-interactive.svg cpu.pb.gz
+```
+
+interactive SVG 支持单击 frame 横向 zoom、`Reset zoom`、`Ctrl-F`/`Search` 正则高亮和
+原生 hover 提示；`Escape` 清除搜索并重置 zoom。它是单文件、可离线打开的 SVG，但 GitHub
+会禁用其中脚本，所以 README 与报告仍应使用默认静态输出。
+
 默认 `-top` 按函数聚合，`-lines -top` 按实际执行行拆分，`-list` 把采样权重标到源码
 行。Lua frame 的函数名、定义行和当前执行行是独立数据；调用名是 VM 在采样点能推断的
 best-effort 名称，匿名调用无法推断时回退到 source/definition line。

@@ -91,7 +91,40 @@ func TestRenderSVGIsValidAndEscaped(t *testing.T) {
 		!strings.Contains(output.String(), "Heap &amp; retained") {
 		t.Fatalf("SVG does not escape frame text:\n%s", output.String())
 	}
-	decoder := xml.NewDecoder(bytes.NewReader(output.Bytes()))
+	if strings.Contains(output.String(), "<script") {
+		t.Fatalf("static SVG unexpectedly contains script:\n%s", output.String())
+	}
+	assertValidXML(t, output.Bytes())
+}
+
+func TestRenderInteractiveSVGIncludesControls(t *testing.T) {
+	root := newTreeNode("")
+	main := newTreeNode("main")
+	main.value = 10
+	root.children[main.name] = main
+	root.value = 10
+	var output bytes.Buffer
+	err := renderSVG(&output, root, 10, metric{name: "cpu", unit: "nanoseconds"}, renderOptions{
+		interactive: true,
+		width:       640,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`id="search"`, `id="reset"`, `data-name="main"`,
+		`<script type="application/ecmascript">`, "Reset zoom", "Ctrl-F",
+	} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("interactive SVG missing %q:\n%s", expected, output.String())
+		}
+	}
+	assertValidXML(t, output.Bytes())
+}
+
+func assertValidXML(t *testing.T, data []byte) {
+	t.Helper()
+	decoder := xml.NewDecoder(bytes.NewReader(data))
 	for {
 		if _, err := decoder.Token(); err != nil {
 			if err == io.EOF {

@@ -12,10 +12,13 @@ trap cleanup EXIT HUP INT TERM
 
 cpu_svg="$temp_dir/cpu.svg"
 heap_svg="$temp_dir/heap.svg"
+interactive_svg="$temp_dir/interactive.svg"
 
 "$flamegraph" --output "$cpu_svg" "$repo_root/build/thread-vm-cpu.pb.gz"
 "$flamegraph" --sample=inuse_space --output "$heap_svg" \
     "$repo_root/build/skynet-heap.pb.gz"
+"$flamegraph" --interactive --output "$interactive_svg" \
+    "$repo_root/build/thread-vm-cpu.pb.gz"
 
 for svg in "$cpu_svg" "$heap_svg"; do
     test -s "$svg"
@@ -31,5 +34,11 @@ grep -Fq 'calculate_orders' "$cpu_svg"
 grep -Fq 'tostring [luaB_tostring]' "$cpu_svg"
 grep -Fq 'sample: inuse_space;' "$heap_svg"
 grep -Fq 'build_retained_cache' "$heap_svg"
+test -s "$interactive_svg"
+grep -Fq '<script type="application/ecmascript">' "$interactive_svg"
+grep -Fq 'id="search"' "$interactive_svg"
+grep -Fq 'id="reset"' "$interactive_svg"
+grep -Fq 'data-name="calculate_orders"' "$interactive_svg"
+grep -Fq 'Ctrl-F' "$interactive_svg"
 
-echo "luaprof static pprof flame graph: ok"
+echo "luaprof static and interactive pprof flame graph: ok"

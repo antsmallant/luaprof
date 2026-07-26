@@ -19,12 +19,13 @@ import (
 )
 
 const (
-	defaultWidth     = 1200
-	frameHeight      = 18
-	headerHeight     = 54
-	footerHeight     = 22
-	minimumWidth     = 0.25
-	approximateGlyph = 7.0
+	defaultWidth            = 1200
+	frameHeight             = 18
+	staticHeaderHeight      = 54
+	interactiveHeaderHeight = 80
+	footerHeight            = 22
+	minimumWidth            = 0.25
+	approximateGlyph        = 7.0
 )
 
 type metric struct {
@@ -40,9 +41,10 @@ type treeNode struct {
 }
 
 type renderOptions struct {
-	title   string
-	width   int
-	palette string
+	title       string
+	width       int
+	palette     string
+	interactive bool
 }
 
 func main() {
@@ -63,6 +65,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	title := flags.String("title", "", "SVG title")
 	width := flags.Int("width", defaultWidth, "SVG width in pixels")
 	palette := flags.String("palette", "auto", "frame palette: auto, hot, or memory")
+	interactive := flags.Bool("interactive", false,
+		"embed JavaScript for zoom and search (not supported by GitHub previews)")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: pprof-flamegraph [options] profile.pb.gz")
 		flags.PrintDefaults()
@@ -110,9 +114,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		output = file
 	}
 	return renderSVG(output, root, total, selected, renderOptions{
-		title:   *title,
-		width:   *width,
-		palette: *palette,
+		title:       *title,
+		width:       *width,
+		palette:     *palette,
+		interactive: *interactive,
 	})
 }
 
@@ -226,21 +231,37 @@ func renderSVG(output io.Writer, root *treeNode, total int64, selected metric,
 			options.palette = "hot"
 		}
 	}
+	chartTop := staticHeaderHeight
+	mode := "Static"
+	if options.interactive {
+		chartTop = interactiveHeaderHeight
+		mode = "Interactive"
+	}
 	depth := maximumDepth(root)
-	height := headerHeight + footerHeight + depth*frameHeight
+	height := chartTop + footerHeight + depth*frameHeight
 	writer := bufio.NewWriter(output)
 
 	fmt.Fprintf(writer, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
-	fmt.Fprintf(writer, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" role=\"img\" aria-labelledby=\"title description\">\n", options.width, height, options.width, height)
+	fmt.Fprintf(writer, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" overflow=\"hidden\" role=\"img\" aria-labelledby=\"title description\">\n", options.width, height, options.width, height)
 	fmt.Fprintf(writer, "<title id=\"title\">%s</title>\n", escape(options.title))
-	fmt.Fprintf(writer, "<desc id=\"description\">Static flame graph for pprof sample type %s, total %s.</desc>\n", escape(selected.name), escape(formatValue(total, selected.unit)))
-	fmt.Fprintln(writer, "<style>text{font-family:Verdana,sans-serif;fill:#171717}.heading{font-size:16px}.subtitle{font-size:11px;fill:#555}.frame text{font-size:11px;pointer-events:none}.frame rect{stroke:#fff;stroke-width:.5}.frame:hover rect{stroke:#111;stroke-width:1}</style>")
+	fmt.Fprintf(writer, "<desc id=\"description\">%s flame graph for pprof sample type %s, total %s.</desc>\n", mode, escape(selected.name), escape(formatValue(total, selected.unit)))
+	fmt.Fprintln(writer, "<style>text{font-family:Verdana,sans-serif;fill:#171717}.heading{font-size:16px}.subtitle{font-size:11px;fill:#555}.control{font-size:11px;fill:#0645ad;cursor:pointer;text-decoration:underline}.frame text{font-size:11px;pointer-events:none}.frame rect{stroke:#fff;stroke-width:.5}.frame:hover rect{stroke:#111;stroke-width:1}.frame.matched rect{stroke:#c000c0;stroke-width:2}</style>")
 	fmt.Fprintln(writer, "<rect width=\"100%\" height=\"100%\" fill=\"#fff\"/>")
 	fmt.Fprintf(writer, "<text class=\"heading\" x=\"10\" y=\"23\">%s</text>\n", escape(options.title))
 	fmt.Fprintf(writer, "<text class=\"subtitle\" x=\"10\" y=\"42\">sample: %s; total: %s; widths are inclusive sample values</text>\n", escape(selected.name), escape(formatValue(total, selected.unit)))
+	if options.interactive {
+		fmt.Fprintln(writer, "<text id=\"search\" class=\"control\" x=\"10\" y=\"65\">Search (Ctrl-F)</text>")
+		fmt.Fprintln(writer, "<text id=\"reset\" class=\"control\" x=\"112\" y=\"65\">Reset zoom</text>")
+		fmt.Fprintf(writer, "<text id=\"matched\" class=\"subtitle\" x=\"%d\" y=\"65\" text-anchor=\"end\"></text>\n", options.width-10)
+	}
 
-	drawChildren(writer, root, total, 0, headerHeight, float64(options.width), depth,
+	fmt.Fprintln(writer, "<g id=\"frames\">")
+	drawChildren(writer, root, total, 0, float64(chartTop), float64(options.width), depth,
 		selected, options.palette)
+	fmt.Fprintln(writer, "</g>")
+	if options.interactive {
+		fmt.Fprintln(writer, interactiveScript)
+	}
 	fmt.Fprintln(writer, "</svg>")
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("write SVG: %w", err)
@@ -267,7 +288,7 @@ func drawNode(writer *bufio.Writer, node *treeNode, total int64, x, chartY, widt
 	y := chartY + float64(maximumDepth-depth)*frameHeight
 	percent := 100 * float64(node.value) / float64(total)
 	label := clipLabel(node.name, width)
-	fmt.Fprintln(writer, "<g class=\"frame\">")
+	fmt.Fprintf(writer, "<g class=\"frame\" data-name=\"%s\">\n", escape(node.name))
 	fmt.Fprintf(writer, "<title>%s (%s, %.2f%%)</title>\n", escape(node.name),
 		escape(formatValue(node.value, selected.unit)), percent)
 	fmt.Fprintf(writer, "<rect x=\"%.3f\" y=\"%.3f\" width=\"%.3f\" height=\"%d\" rx=\"1\" fill=\"%s\"/>\n",
@@ -374,3 +395,88 @@ func formatScaled(value float64, units []string, base float64) string {
 func escape(value string) string {
 	return html.EscapeString(value)
 }
+
+const interactiveScript = `<script type="application/ecmascript"><![CDATA[
+(function () {
+  "use strict";
+  const svg = document.querySelector("svg");
+  const frames = document.getElementById("frames");
+  const matched = document.getElementById("matched");
+  const originalTransform = frames.getAttribute("transform");
+
+  function findFrame(target) {
+    while (target && target !== svg) {
+      if (target.classList && target.classList.contains("frame")) return target;
+      target = target.parentNode;
+    }
+    return null;
+  }
+
+  function resetZoom() {
+    if (originalTransform === null) frames.removeAttribute("transform");
+    else frames.setAttribute("transform", originalTransform);
+  }
+
+  function zoom(frame) {
+    const rect = frame.querySelector("rect");
+    if (!rect) return;
+    const x = Number(rect.getAttribute("x"));
+    const width = Number(rect.getAttribute("width"));
+    if (!(width > 0)) return;
+    const scale = svg.viewBox.baseVal.width / width;
+    frames.setAttribute("transform", "matrix(" + scale + " 0 0 1 " + (-x * scale) + " 0)");
+  }
+
+  function clearSearch() {
+    frames.querySelectorAll(".frame.matched").forEach(function (frame) {
+      frame.classList.remove("matched");
+    });
+    matched.textContent = "";
+  }
+
+  function search() {
+    const query = window.prompt("Search function name (regular expression):", "");
+    if (query === null) return;
+    clearSearch();
+    if (query === "") return;
+    let expression;
+    try {
+      expression = new RegExp(query, "i");
+    } catch (error) {
+      matched.textContent = "Invalid regular expression";
+      return;
+    }
+    let count = 0;
+    frames.querySelectorAll(".frame").forEach(function (frame) {
+      if (expression.test(frame.getAttribute("data-name") || "")) {
+        frame.classList.add("matched");
+        count++;
+      }
+    });
+    matched.textContent = count + (count === 1 ? " match" : " matches");
+  }
+
+  svg.addEventListener("click", function (event) {
+    if (event.target.id === "search") {
+      search();
+      return;
+    }
+    if (event.target.id === "reset") {
+      resetZoom();
+      return;
+    }
+    const frame = findFrame(event.target);
+    if (frame) zoom(frame);
+  });
+
+  window.addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      search();
+    } else if (event.key === "Escape") {
+      clearSearch();
+      resetZoom();
+    }
+  });
+}());
+]]></script>`
