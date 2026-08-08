@@ -29,6 +29,8 @@ make test
 ## 效果展示
 
 以下结果来自仓库示例；sampling 数值会随机器和每次运行略有变化。
+CPU 示例使用默认的 100Hz。更高频率不一定更准确；固定周期锁相风险及多频率复测方法见
+[采样模型与结果解读](docs/profiling-model.md#21-频率选择与周期锁相)。
 
 ### Thread-per-VM CPU
 

@@ -105,6 +105,7 @@ close_benchmark(benchmark *bench) {
 
 static uint64_t
 start_cpu(benchmark *bench) {
+	/* Deliberate high-frequency stress configuration, not a user default. */
 	lp_collector_config config = {
 		.kind = LP_COLLECTOR_CPU,
 		.value.cpu = { .sample_hz = 1000 },

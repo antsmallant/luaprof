@@ -64,9 +64,7 @@ local function post_memory_cpu_work()
 	return calculate_orders(20000000)
 end
 
-local cpu_recorder = assert(profile.cpu.start {
-	sample_hz = 250,
-})
+local cpu_recorder = assert(profile.cpu.start())
 local memory_recorder = assert(profile.memory.start {
 	sample_bytes = 64 * 1024,
 	track_free = true,
@@ -86,6 +84,7 @@ assert(memory_result:write(heap_path))
 
 local cpu_stats = cpu_result:stats()
 local memory_stats = memory_result:stats()
+assert(cpu_stats.sample_hz == 100)
 assert(cpu_stats.samples >= 50)
 assert(memory_stats.samples > 0)
 assert(memory_stats.inuse_space > 0)

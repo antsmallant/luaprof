@@ -55,7 +55,24 @@ assert(memory_result:write("heap.pb.gz"))
 
 ## 2. CPU 采样模型
 
-### 2.1 thread-per-VM
+### 2.1 频率选择与周期锁相
+
+默认 100Hz 适合常规、持续运行的 CPU profile，仓库中面向用户的示例也使用这个默认值。
+更高频率能在短时间内获得更多样本，但同时增加 profiler 开销及 timer overrun 的概率；
+500Hz 到 1000Hz 主要用于短时测试和压力场景，不应直接作为生产配置模板。
+
+当前 CPU timer 使用固定采样周期。如果业务本身存在稳定的周期，例如固定间隔轮询、帧循环
+或批处理，采样 tick 可能长期落在周期内相近的位置，形成周期锁相（periodic aliasing），
+使热点占比产生系统性偏差。把 100Hz 改成 99Hz 只能改变采样与业务周期的相对关系，99Hz
+本身仍是固定周期，因此不能从原理上消除锁相。
+
+怀疑锁相时，应延长采集时间，并在不同启动时刻重复采集；还可以分别使用 97Hz、100Hz、
+101Hz 等相邻频率复测并比较热点排序。结果对频率或启动时刻明显敏感，说明固定周期偏差可能
+不可忽略。系统性降低这类偏差需要随机化采样间隔（例如加入 jitter 或使用 Poisson 过程）；
+当前版本尚未实现随机化 CPU timer。无论使用哪个频率，都应同时检查 `overrun_ticks`、drop
+及 overflow 质量指标。
+
+### 2.2 thread-per-VM
 
 thread-per-VM backend 使用 `CLOCK_THREAD_CPUTIME_ID`。timer tick 只记录小型 VM 状态
 快照，不在 signal handler 中遍历 Lua 或 native stack。recorder 在下一个 VM safe
@@ -65,7 +82,7 @@ point 消费 pending tick 并捕获 Lua stack。
 这种设计避免在异步信号中访问不稳定 VM 数据。VM 必须始终在启动 recorder 的 OS
 thread 上运行。
 
-### 2.2 Skynet service
+### 2.3 Skynet service
 
 Skynet backend 是进程级基础设施，但 profile target 是单个 service：
 
@@ -79,7 +96,7 @@ Skynet backend 是进程级基础设施，但 profile target 是单个 service�
 `sample_hz`。Lua API 没有整个 Skynet 进程合并 profile，也不能从一个 service 指定另一
 任意 handle。
 
-### 2.3 Lua、C、GC 和 host 状态
+### 2.4 Lua、C、GC 和 host 状态
 
 样本按 VM 状态归入 Lua、CFunction、GC 或 host。发生在长时间 C 调用中的 tick 会保留
 当前 `lua_CFunction` 指针和 Lua caller，不需要在热路径展开 native C stack。
@@ -102,7 +119,7 @@ symbolization 需要匹配的原二进制。
 这里记录的是当前 CFunction，不还原 native C stack。定位 C/C++ 内部热点行需要另用
 native profiler。GC 和 host 状态使用 synthetic frame。
 
-### 2.4 CPU 统计项
+### 2.5 CPU 统计项
 
 主要统计字段：
 

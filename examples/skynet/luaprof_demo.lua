@@ -59,7 +59,7 @@ end
 
 skynet.start(function()
 	assert(_VERSION == "Lua 5.5")
-	local cpu_recorder = assert(profile.cpu.start { sample_hz = 250 })
+	local cpu_recorder = assert(profile.cpu.start())
 	local memory_recorder = assert(profile.memory.start {
 		sample_bytes = 64 * 1024,
 		track_free = true,
@@ -85,6 +85,7 @@ skynet.start(function()
 
 	local cpu_stats = cpu_result:stats()
 	local memory_stats = memory_result:stats()
+	assert(cpu_stats.sample_hz == 100)
 	assert(cpu_stats.samples >= 25)
 	assert(cpu_stats.scheduler_workers > 0)
 	assert(memory_stats.samples > 0)

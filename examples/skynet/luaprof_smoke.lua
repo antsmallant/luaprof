@@ -13,6 +13,7 @@ skynet.start(function()
 	assert(shared.message == "embedded-lua")
 	assert(shared.nested[1] == 17 and shared.nested[2] == 23)
 
+	-- This short integration smoke test uses 1000Hz to collect samples quickly.
 	local cpu_recorder = assert(profile.cpu.start { sample_hz = 1000 })
 	local memory_recorder = assert(profile.memory.start {
 		sample_bytes = 64 * 1024,
