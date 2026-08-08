@@ -1,6 +1,12 @@
 #ifndef LUAPROF_RUNTIME_H
 #define LUAPROF_RUNTIME_H
 
+/*
+ * Internal source interface shared by luaprof components and tests.
+ * This is not a supported external C API and provides no cross-version
+ * source or binary compatibility. Build all users from the same checkout.
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

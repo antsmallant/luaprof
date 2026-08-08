@@ -252,11 +252,23 @@ transition_tick_worker(void *argument) {
 	lp_skynet_host_dispatch_enter(TRANSITION_HANDLE);
 	lp_collector_config config = {
 		.kind = LP_COLLECTOR_CPU,
-		.value.cpu = { .sample_hz = 1000 },
+		.value.cpu = { .sample_hz = 1 },
 	};
 	assert(lp_runtime_start(test->runtime, test->L, &config,
 		&test->generation) == LP_OK);
-	lp_skynet_host_test_inject_transition_tick();
+	lp_skynet_host_test_inject_transition_tick(0);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_dispatch_enter(TRANSITION_HANDLE);
+	lp_skynet_quality zero_quality;
+	test->bridge.scheduler_api->take_quality(test->bridge.scheduler_token,
+		&zero_quality);
+	assert(zero_quality.overrun_events == 0);
+	assert(zero_quality.overrun_ticks == 0);
+	assert(zero_quality.unstable == 1);
+	assert(zero_quality.dropped == 0);
+	assert(zero_quality.profiler_overhead == 0);
+	assert(zero_quality.stale == 0);
+	lp_skynet_host_test_inject_transition_tick(3);
 	lp_skynet_host_dispatch_leave();
 	lp_skynet_host_dispatch_enter(TRANSITION_HANDLE);
 	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
@@ -273,7 +285,13 @@ test_transition_tick_accounting(void) {
 	pthread_t thread;
 	assert(pthread_create(&thread, NULL, transition_tick_worker, &test) == 0);
 	assert(pthread_join(thread, NULL) == 0);
-	assert(test.result.stats.unstable_events >= 1);
+	assert(test.result.stats.samples == 0);
+	assert(test.result.stats.overrun_events == 1);
+	assert(test.result.stats.overrun_ticks == 3);
+	assert(test.result.stats.unstable_events == 1);
+	assert(test.result.stats.dropped_events == 0);
+	assert(test.result.stats.profiler_overhead_events == 0);
+	assert(test.result.stats.stale_events == 0);
 	close_test(&test);
 }
 

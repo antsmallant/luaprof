@@ -33,6 +33,7 @@ RUNTIME_OBJECT := $(BUILD_DIR)/runtime.o
 CPU_CORE_OBJECT := $(BUILD_DIR)/cpu_core.o
 MEMORY_CORE_OBJECT := $(BUILD_DIR)/memory_core.o
 THREAD_TIMER_OBJECT := $(BUILD_DIR)/thread_timer.o
+THREAD_TIMER_TEST_OBJECT := $(BUILD_DIR)/thread_timer-test.o
 SKYNET_BACKEND_OBJECT := $(BUILD_DIR)/skynet_backend.o
 SKYNET_HOST_OBJECT := $(BUILD_DIR)/skynet_host.o
 SKYNET_HOST_TEST_OBJECT := $(BUILD_DIR)/skynet_host-test.o
@@ -181,6 +182,10 @@ $(MEMORY_CORE_OBJECT): $(MEMORY_CORE_SOURCE) src/memory_core.h include/luaprof/r
 $(THREAD_TIMER_OBJECT): $(THREAD_TIMER_SOURCE) src/thread_timer.h include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc -c $< -o $@
+
+$(THREAD_TIMER_TEST_OBJECT): $(THREAD_TIMER_SOURCE) src/thread_timer.h src/thread_timer_test.h include/luaprof/runtime.h $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
+		-DLUAPROF_TESTING -I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc -c $< -o $@
 
 $(SKYNET_BACKEND_OBJECT): $(SKYNET_BACKEND_SOURCE) src/skynet_backend.h include/luaprof/skynet_host.h | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror -fPIC \
@@ -390,9 +395,12 @@ $(SKYNET_COMBINED_SAMPLING_BENCH): tests/bench/combined_sampling.c $(RUNTIME_OBJ
 		-I$(INCLUDE_DIR) -I$(SKYNET_LUA_DIR) -Isrc $(LDFLAGS) $^ \
 		$(LDLIBS) -lm -ldl -pthread -lrt -o $@
 
-$(CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+$(CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c src/thread_timer_test.h $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_TEST_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
-		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
+		-DLUAPROF_TESTING -I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) \
+		tests/integration/cpu_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) \
+		$(MEMORY_CORE_OBJECT) $(THREAD_TIMER_TEST_OBJECT) $(SKYNET_BACKEND_OBJECT) \
+		$(LUA_BRIDGE_OBJECT) $(LUA_LIB) $(LDLIBS) \
 		-lm -ldl -pthread -lrt -o $@
 
 $(LUA46_CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(LUA46_THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA46_LUA_BRIDGE_OBJECT) $(LUA46_LIB) | $(LUA46_BUILD_DIR)

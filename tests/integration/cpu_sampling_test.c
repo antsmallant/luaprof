@@ -2,6 +2,9 @@
 
 #include "lua_bridge.h"
 #include "luaprof/runtime.h"
+#if defined(LUAPROF_TESTING)
+#include "thread_timer_test.h"
+#endif
 
 #include <assert.h>
 #include <pthread.h>
@@ -317,6 +320,41 @@ test_timer_overrun_quality(void) {
 	vm_close(&vm);
 }
 
+#if defined(LUAPROF_TESTING)
+static void
+test_exact_timer_overrun_accounting(void) {
+	test_vm vm;
+	vm_open(&vm);
+	uint64_t generation = start_cpu(&vm, 1);
+	lp_thread_timer_test_inject_tick(vm.bridge.cpu_timer, 0);
+	uint64_t dropped = UINT64_MAX;
+	uint64_t unstable = UINT64_MAX;
+	uint64_t profiler_overhead = UINT64_MAX;
+	uint64_t overrun_events = UINT64_MAX;
+	uint64_t overrun_ticks = UINT64_MAX;
+	lp_thread_timer_take_quality(vm.bridge.cpu_timer, &dropped, &unstable,
+		&profiler_overhead, &overrun_events, &overrun_ticks);
+	assert(dropped == 0);
+	assert(unstable == 0);
+	assert(profiler_overhead == 0);
+	assert(overrun_events == 0);
+	assert(overrun_ticks == 0);
+	lp_thread_timer_test_inject_tick(vm.bridge.cpu_timer, 3);
+	lp_result result = stop_cpu(&vm, generation);
+	assert(result.stats.samples == 2);
+	assert(result.stats.samples == result.stats.sample_host +
+		result.stats.sample_lua + result.stats.sample_c +
+		result.stats.sample_gc);
+	assert(result.stats.overrun_events == 1);
+	assert(result.stats.overrun_ticks == 3);
+	assert(result.stats.unstable_events == 0);
+	assert(result.stats.dropped_events == 0);
+	assert(result.stats.profiler_overhead_events == 0);
+	lp_result_dispose(&result);
+	vm_close(&vm);
+}
+#endif
+
 static void
 test_repeated_stop(void) {
 	test_vm vm;
@@ -370,6 +408,9 @@ main(void) {
 	test_known_hotspot_ratio();
 	test_multiple_threads();
 	test_timer_overrun_quality();
+#if defined(LUAPROF_TESTING)
+	test_exact_timer_overrun_accounting();
+#endif
 	test_repeated_stop();
 	test_one_vm_per_thread();
 	test_delete_active_runtime();

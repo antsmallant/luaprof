@@ -38,6 +38,12 @@ Skynet Lua 定义 `505`。即使版本号相同，不同源码树仍不能互换
 - Lua VM bridge：`LUA_PROFILE_ABI_VERSION == 2`
 - Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 2`
 
+`include/luaprof/runtime.h` 是 module 内部组件和仓库测试共享的源码接口，不是受支持的外部
+C API，也不承诺跨版本 source/ABI 兼容。依赖它的 object 必须从同一个 checkout 整体重编译；
+修改其中的结构或函数签名不单独升级上述两个 ABI version，但必须记录不兼容变化并确认没有
+把它误作为外部接入点。ELF module 因默认符号可见性而出现 `lp_runtime_*`、`lp_result_*`
+dynamic symbol，不构成兼容性承诺。
+
 四个 fork 的 profiling 功能默认关闭。Lua fork 使用 `LUAPROF=1` 定义
 `LUA_USE_LUAPROF`；Skynet 的同名 Make 变量还会启用 `SKYNET_LUAPROF` 并链接 host
 library。父仓库所有 VM/module target 都显式启用，不依赖 fork 的默认值。修改 feature gate

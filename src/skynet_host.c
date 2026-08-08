@@ -98,6 +98,7 @@ static _Thread_local uint32_t current_handle;
 
 #if defined(LUAPROF_TESTING)
 static _Thread_local bool inject_transition_tick;
+static _Thread_local int inject_transition_overrun;
 #endif
 
 static uint64_t
@@ -427,6 +428,7 @@ publish_slot(lp_skynet_worker *worker, lp_skynet_target *target,
 		siginfo_t info;
 		memset(&info, 0, sizeof(info));
 		info.si_code = SI_TIMER;
+		info.si_overrun = inject_transition_overrun;
 		info.si_value.sival_ptr = worker;
 		timer_signal_handler(host_signal, &info, NULL);
 	}
@@ -452,7 +454,8 @@ publish_slot(lp_skynet_worker *worker, lp_skynet_target *target,
 
 #if defined(LUAPROF_TESTING)
 void
-lp_skynet_host_test_inject_transition_tick(void) {
+lp_skynet_host_test_inject_transition_tick(int overrun) {
+	inject_transition_overrun = overrun;
 	inject_transition_tick = true;
 }
 #endif

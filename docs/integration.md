@@ -42,6 +42,10 @@ VM 数据结构重新审查，不能视为 ABI 兼容。
 3. **宿主 backend**：thread-per-VM 直接使用 module 内的线程 timer；Skynet 还需要把
    `libluaprof-skynet-host.a` 链入 `skynet` 可执行文件并增加 scheduler hook。
 
+`include/luaprof/runtime.h` 只用于上述 module 内部组件和仓库测试，不是宿主接入扩展点，
+也不保证跨版本 C source/ABI 兼容。外部接入应使用版本化的 Lua VM bridge 与 Skynet host
+API，并确保 module 内部 object 来自同一个 luaprof checkout。
+
 内存事件来自 Lua 内部 `lmem.c`，而不是替换公开的 `lua_Alloc`。因此 `lua_Alloc` 的
 签名和 `ud` 语义保持不变，同时 allocation callback 能拿到准确的 `lua_State *`、旧/新
 指针、旧/新 requested size，以及 realloc 是否成功。

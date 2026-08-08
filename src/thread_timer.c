@@ -2,6 +2,10 @@
 
 #include "thread_timer.h"
 
+#if defined(LUAPROF_TESTING)
+#include "thread_timer_test.h"
+#endif
+
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
@@ -150,6 +154,18 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	lua_profile_request(L, 1);
 	errno = saved_errno;
 }
+
+#if defined(LUAPROF_TESTING)
+void
+lp_thread_timer_test_inject_tick(lp_thread_timer *timer, int overrun) {
+	siginfo_t info;
+	memset(&info, 0, sizeof(info));
+	info.si_code = SI_TIMER;
+	info.si_overrun = overrun;
+	info.si_value.sival_ptr = timer;
+	timer_signal_handler(timer_signal, &info, NULL);
+}
+#endif
 
 static lp_status
 acquire_timer_signal(lp_thread_timer *timer, int *signal_number) {
