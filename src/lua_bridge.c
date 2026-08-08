@@ -48,15 +48,17 @@ record_thread_quality(lp_lua_bridge *bridge) {
 	uint64_t dropped = 0;
 	uint64_t unstable = 0;
 	uint64_t profiler_overhead = 0;
+	uint64_t overrun_events = 0;
+	uint64_t overrun_ticks = 0;
 	lp_thread_timer_take_quality(bridge->cpu_timer, &dropped, &unstable,
-		&profiler_overhead);
+		&profiler_overhead, &overrun_events, &overrun_ticks);
 	lp_runtime_cpu_quality(bridge->runtime, bridge->cpu_generation, dropped,
-		unstable, profiler_overhead);
+		unstable, profiler_overhead, overrun_events, overrun_ticks);
 }
 
 static void
 record_cpu_event(lp_lua_bridge *bridge, lua_State *state, lp_vm_state vm_state,
-	lp_lua_cfunction cfunction, unsigned int weight) {
+	lp_lua_cfunction cfunction) {
 	lp_stack_frame frames[LP_CAPTURE_STACK_DEPTH];
 	bool truncated = false;
 	size_t depth = 0;
@@ -64,15 +66,14 @@ record_cpu_event(lp_lua_bridge *bridge, lua_State *state, lp_vm_state vm_state,
 		depth = capture_stack(state, frames, &truncated);
 	}
 	lp_runtime_cpu_sample(bridge->runtime, bridge->cpu_generation, vm_state,
-		cfunction, frames, depth, truncated, weight);
+		cfunction, frames, depth, truncated);
 }
 
 static void
 drain_thread_timer(lp_lua_bridge *bridge) {
 	lp_tick_event event;
 	while (lp_thread_timer_next(bridge->cpu_timer, &event)) {
-		record_cpu_event(bridge, event.state, event.vm_state, event.cfunction,
-			event.weight);
+		record_cpu_event(bridge, event.state, event.vm_state, event.cfunction);
 	}
 	record_thread_quality(bridge);
 }
@@ -93,12 +94,13 @@ drain_scheduler(lp_lua_bridge *bridge) {
 	while (bridge->scheduler_api->next_event(bridge->scheduler_token,
 		&event)) {
 		record_cpu_event(bridge, event.state, (lp_vm_state)event.vm_state,
-			(lp_lua_cfunction)event.cfunction, event.weight);
+			(lp_lua_cfunction)event.cfunction);
 	}
 	lp_skynet_quality quality;
 	bridge->scheduler_api->take_quality(bridge->scheduler_token, &quality);
 	lp_runtime_cpu_quality(bridge->runtime, bridge->cpu_generation,
-		quality.dropped, quality.unstable, quality.profiler_overhead);
+		quality.dropped, quality.unstable, quality.profiler_overhead,
+		quality.overrun_events, quality.overrun_ticks);
 	lp_runtime_cpu_scheduler_quality(bridge->runtime,
 		bridge->cpu_generation, quality.stale,
 		worker_count(quality.worker_mask));

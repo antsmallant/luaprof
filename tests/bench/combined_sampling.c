@@ -32,7 +32,6 @@ typedef struct benchmark {
 } benchmark;
 
 typedef struct benchmark_stats {
-	uint64_t cpu_ticks;
 	uint64_t cpu_samples;
 	uint64_t state_host;
 	uint64_t state_lua;
@@ -41,6 +40,8 @@ typedef struct benchmark_stats {
 	uint64_t dropped;
 	uint64_t unstable;
 	uint64_t profiler_overhead;
+	uint64_t overrun_events;
+	uint64_t overrun_ticks;
 	uint64_t memory_samples;
 	uint64_t aggregate_overflows;
 	uint64_t symbol_overflows;
@@ -158,7 +159,6 @@ run_mode(benchmark *bench, int mode, benchmark_stats *stats) {
 	if (cpu_generation != 0) {
 		lp_result result = stop(bench, LP_COLLECTOR_CPU,
 			cpu_generation);
-		stats->cpu_ticks += result.stats.sample_weight;
 		stats->cpu_samples += result.stats.samples;
 		stats->state_host += result.stats.sample_host;
 		stats->state_lua += result.stats.sample_lua;
@@ -167,6 +167,8 @@ run_mode(benchmark *bench, int mode, benchmark_stats *stats) {
 		stats->dropped += result.stats.dropped_events;
 		stats->unstable += result.stats.unstable_events;
 		stats->profiler_overhead += result.stats.profiler_overhead_events;
+		stats->overrun_events += result.stats.overrun_events;
+		stats->overrun_ticks += result.stats.overrun_ticks;
 		stats->aggregate_overflows += result.stats.aggregate_overflows;
 		stats->symbol_overflows += result.stats.symbol_overflows;
 		lp_result_dispose(&result);
@@ -209,18 +211,20 @@ main(void) {
 		double median_ms = (double)elapsed[mode][ROUNDS / 2] / 1000000.0;
 		double overhead = (double)elapsed[mode][ROUNDS / 2] / baseline - 1.0;
 		double effective_hz = total_elapsed[mode] == 0 ? 0.0 :
-			(double)stats[mode].cpu_ticks * 1000000000.0 /
+			(double)stats[mode].cpu_samples * 1000000000.0 /
 			(double)total_elapsed[mode];
-		printf("%-12s %8.2f ms  %+6.2f%%  cpu=%" PRIu64 "/%" PRIu64
+		printf("%-12s %8.2f ms  %+6.2f%%  cpu=%" PRIu64
 			" (%.0fHz L/C/G/H=%" PRIu64 "/%" PRIu64 "/%" PRIu64
 			"/%" PRIu64 ", drop/unstable/overhead=%" PRIu64 "/%" PRIu64
-			"/%" PRIu64 ") mem=%" PRIu64 " overflow=A/S/L=%" PRIu64
+			"/%" PRIu64 ", overrun=%" PRIu64 "/%" PRIu64
+			") mem=%" PRIu64 " overflow=A/S/L=%" PRIu64
 			"/%" PRIu64 "/%" PRIu64 "\n", mode_names[mode], median_ms,
-			overhead * 100.0, stats[mode].cpu_ticks,
-			stats[mode].cpu_samples, effective_hz, stats[mode].state_lua,
+			overhead * 100.0, stats[mode].cpu_samples, effective_hz,
+			stats[mode].state_lua,
 			stats[mode].state_c, stats[mode].state_gc,
 			stats[mode].state_host, stats[mode].dropped,
 			stats[mode].unstable, stats[mode].profiler_overhead,
+			stats[mode].overrun_events, stats[mode].overrun_ticks,
 			stats[mode].memory_samples, stats[mode].aggregate_overflows,
 			stats[mode].symbol_overflows, stats[mode].live_map_overflows);
 	}

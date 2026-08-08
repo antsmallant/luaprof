@@ -19,6 +19,7 @@ typedef struct profile_summary {
 	size_t mappings;
 	size_t strings;
 	size_t expected_values;
+	uint64_t value_totals[4];
 	uint64_t max_location_reference;
 	uint64_t max_function_reference;
 	uint64_t default_sample_type;
@@ -156,6 +157,24 @@ parse_packed(const unsigned char *data, size_t size, size_t *count,
 }
 
 static bool
+parse_values(const unsigned char *data, size_t size, size_t *count,
+	profile_summary *summary) {
+	size_t offset = 0;
+	while (offset < size) {
+		uint64_t value;
+		if (!read_varint(data, size, &offset, &value)) {
+			return false;
+		}
+		if (*count < sizeof(summary->value_totals) /
+			sizeof(summary->value_totals[0])) {
+			summary->value_totals[*count] += value;
+		}
+		(*count)++;
+	}
+	return offset == size;
+}
+
+static bool
 parse_sample(const unsigned char *data, size_t size,
 	profile_summary *summary) {
 	size_t offset = 0;
@@ -178,7 +197,7 @@ parse_sample(const unsigned char *data, size_t size,
 				&summary->max_location_reference)) {
 				return false;
 			}
-			if (field == 2 && !parse_packed(packed, length, &values, NULL)) {
+			if (field == 2 && !parse_values(packed, length, &values, summary)) {
 				return false;
 			}
 		}
@@ -439,11 +458,11 @@ cpu_result(void) {
 		.currentline = 12,
 	};
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, profiled_cfunction,
-		&frame, 1, false, 3);
+		&frame, 1, false);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, unresolved_cfunction(),
-		&frame, 1, false, 1);
+		&frame, 1, false);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_GC, NULL, &frame, 1,
-		false, 2);
+		false);
 	lp_result result;
 	assert(lp_runtime_stop(runtime, NULL, LP_COLLECTOR_CPU, generation,
 		&result) == LP_OK);
@@ -531,6 +550,8 @@ main(void) {
 	assert(summary.saw_cpu_source);
 	assert(summary.saw_cfunction);
 	assert(summary.saw_raw_cfunction);
+	assert(summary.value_totals[0] == 3);
+	assert(summary.value_totals[1] == UINT64_C(30000000));
 	free(data);
 	char *folded = read_text(cpu_folded);
 	assert(strstr(folded, "cpu_work") != NULL);

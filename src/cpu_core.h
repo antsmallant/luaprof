@@ -9,9 +9,10 @@ lp_cpu_profile *lp_cpu_profile_new(void);
 void lp_cpu_profile_delete(lp_cpu_profile *profile);
 void lp_cpu_profile_record(lp_cpu_profile *profile, lp_vm_state state,
 	lp_lua_cfunction cfunction, const lp_stack_frame *frames, size_t depth,
-	bool truncated, uint64_t weight);
+	bool truncated);
 void lp_cpu_profile_quality(lp_cpu_profile *profile, uint64_t dropped,
-	uint64_t unstable, uint64_t profiler_overhead);
+	uint64_t unstable, uint64_t profiler_overhead, uint64_t overrun_events,
+	uint64_t overrun_ticks);
 void lp_cpu_profile_merge_stats(const lp_cpu_profile *profile,
 	lp_result_stats *stats);
 size_t lp_cpu_profile_sample_count(const lp_cpu_profile *profile);

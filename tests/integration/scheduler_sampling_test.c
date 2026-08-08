@@ -167,6 +167,8 @@ test_migration(void) {
 	assert(test.result.stats.sample_lua >= 20);
 	assert(test.result.stats.scheduler_workers == 2);
 	assert(test.result.stats.stale_events > 0);
+	assert(test.result.stats.overrun_events > 0);
+	assert(test.result.stats.overrun_ticks > 0);
 	assert(result_has_source(&test.result, "@scheduler_migration.lua"));
 	assert(!result_has_source(&test.result, "@scheduler_unrelated.lua"));
 	close_test(&test);

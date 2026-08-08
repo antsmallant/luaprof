@@ -219,30 +219,14 @@ lp_cpu_profile_delete(lp_cpu_profile *profile) {
 void
 lp_cpu_profile_record(lp_cpu_profile *profile, lp_vm_state state,
 	lp_lua_cfunction cfunction, const lp_stack_frame *frames, size_t depth,
-	bool truncated, uint64_t weight) {
-	if (profile == NULL || weight == 0 || state < LP_VM_HOST ||
-		state > LP_VM_GC) {
+	bool truncated) {
+	if (profile == NULL || state < LP_VM_HOST || state > LP_VM_GC) {
 		return;
 	}
 	if (depth > LP_CPU_MAX_STACK_DEPTH) {
 		depth = LP_CPU_MAX_STACK_DEPTH;
 		truncated = true;
 	}
-	profile->stats.samples = saturating_add(profile->stats.samples, 1);
-	profile->stats.sample_weight = saturating_add(
-		profile->stats.sample_weight, weight);
-	uint64_t *state_weight[] = {
-		&profile->stats.sample_host,
-		&profile->stats.sample_lua,
-		&profile->stats.sample_c,
-		&profile->stats.sample_gc,
-	};
-	*state_weight[state] = saturating_add(*state_weight[state], weight);
-	if (truncated) {
-		profile->stats.stack_truncations = saturating_add(
-			profile->stats.stack_truncations, 1);
-	}
-
 	lp_compact_frame compact[LP_CPU_MAX_STACK_DEPTH];
 	uint64_t hash = UINT64_C(1469598103934665603);
 	hash = hash_bytes(hash, &state, sizeof(state));
@@ -260,29 +244,44 @@ lp_cpu_profile_record(lp_cpu_profile *profile, lp_vm_state state,
 		if (aggregate->used) {
 			if (aggregate->hash == hash && aggregate_matches(aggregate,
 				state, cfunction, compact, depth)) {
-				aggregate->weight = saturating_add(aggregate->weight,
-					weight);
-				return;
+				aggregate->weight = saturating_add(aggregate->weight, 1);
+				goto recorded;
 			}
 			continue;
 		}
 		aggregate->used = true;
 		aggregate->hash = hash;
-		aggregate->weight = weight;
+		aggregate->weight = 1;
 		aggregate->cfunction = cfunction;
 		aggregate->depth = (uint16_t)depth;
 		aggregate->state = state;
 		memcpy(aggregate->frames, compact, depth * sizeof(compact[0]));
 		profile->aggregate_count++;
-		return;
+		goto recorded;
 	}
 	profile->stats.aggregate_overflows = saturating_add(
-		profile->stats.aggregate_overflows, weight);
+		profile->stats.aggregate_overflows, 1);
+	return;
+
+recorded:
+	profile->stats.samples = saturating_add(profile->stats.samples, 1);
+	uint64_t *state_samples[] = {
+		&profile->stats.sample_host,
+		&profile->stats.sample_lua,
+		&profile->stats.sample_c,
+		&profile->stats.sample_gc,
+	};
+	*state_samples[state] = saturating_add(*state_samples[state], 1);
+	if (truncated) {
+		profile->stats.stack_truncations = saturating_add(
+			profile->stats.stack_truncations, 1);
+	}
 }
 
 void
 lp_cpu_profile_quality(lp_cpu_profile *profile, uint64_t dropped,
-	uint64_t unstable, uint64_t profiler_overhead) {
+	uint64_t unstable, uint64_t profiler_overhead, uint64_t overrun_events,
+	uint64_t overrun_ticks) {
 	if (profile == NULL) {
 		return;
 	}
@@ -292,6 +291,10 @@ lp_cpu_profile_quality(lp_cpu_profile *profile, uint64_t dropped,
 		profile->stats.unstable_events, unstable);
 	profile->stats.profiler_overhead_events = saturating_add(
 		profile->stats.profiler_overhead_events, profiler_overhead);
+	profile->stats.overrun_events = saturating_add(
+		profile->stats.overrun_events, overrun_events);
+	profile->stats.overrun_ticks = saturating_add(
+		profile->stats.overrun_ticks, overrun_ticks);
 }
 
 void
@@ -301,11 +304,12 @@ lp_cpu_profile_merge_stats(const lp_cpu_profile *profile,
 		return;
 	}
 	stats->samples = profile->stats.samples;
-	stats->sample_weight = profile->stats.sample_weight;
 	stats->sample_host = profile->stats.sample_host;
 	stats->sample_lua = profile->stats.sample_lua;
 	stats->sample_c = profile->stats.sample_c;
 	stats->sample_gc = profile->stats.sample_gc;
+	stats->overrun_events = profile->stats.overrun_events;
+	stats->overrun_ticks = profile->stats.overrun_ticks;
 	stats->dropped_events = profile->stats.dropped_events;
 	stats->unstable_events = profile->stats.unstable_events;
 	stats->profiler_overhead_events =

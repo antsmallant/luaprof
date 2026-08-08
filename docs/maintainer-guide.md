@@ -36,7 +36,7 @@ Skynet Lua 定义 `505`。即使版本号相同，不同源码树仍不能互换
 当前 ABI contract：
 
 - Lua VM bridge：`LUA_PROFILE_ABI_VERSION == 2`
-- Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 1`
+- Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 2`
 
 四个 fork 的 profiling 功能默认关闭。Lua fork 使用 `LUAPROF=1` 定义
 `LUA_USE_LUAPROF`；Skynet 的同名 Make 变量还会启用 `SKYNET_LUAPROF` 并链接 host

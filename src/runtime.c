@@ -314,8 +314,7 @@ lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
 void
 lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
 	lp_vm_state state, lp_lua_cfunction cfunction,
-	const lp_stack_frame *frames, size_t depth, bool truncated,
-	uint64_t weight) {
+	const lp_stack_frame *frames, size_t depth, bool truncated) {
 	if (runtime == NULL) {
 		return;
 	}
@@ -324,12 +323,13 @@ lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
 		return;
 	}
 	lp_cpu_profile_record(slot->cpu_profile, state, cfunction, frames,
-		depth, truncated, weight);
+		depth, truncated);
 }
 
 void
 lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
-	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead) {
+	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead,
+	uint64_t overrun_events, uint64_t overrun_ticks) {
 	if (runtime == NULL) {
 		return;
 	}
@@ -338,7 +338,7 @@ lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
 		return;
 	}
 	lp_cpu_profile_quality(slot->cpu_profile, dropped, unstable,
-		profiler_overhead);
+		profiler_overhead, overrun_events, overrun_ticks);
 }
 
 void

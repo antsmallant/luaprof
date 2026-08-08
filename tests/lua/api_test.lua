@@ -52,6 +52,8 @@ assert(cpu_stats.generation ~= memory_stats.generation)
 assert(cpu_stats.sample_hz == 200)
 assert(cpu_stats.state_lua > 0)
 assert(cpu_stats.state_c > 0)
+assert(cpu_stats.overrun_events >= 0)
+assert(cpu_stats.overrun_ticks >= cpu_stats.overrun_events)
 
 local stopped, stopped_error = cpu:stop()
 assert(stopped == nil)

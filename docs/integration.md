@@ -347,8 +347,8 @@ nm -g --defined-only /path/to/skynet | grep lua_profile_capturestack
 - Skynet：至少使用两个 worker，让目标 service 主动 yield/迁移，并确认
   `scheduler_workers > 0`；若为零，说明 module 没有使用 Skynet backend。
 - `track_free = true` 时确认 `inuse_space > 0` 且 `live_map_overflows == 0`。
-- 检查 `dropped_events`、`unstable_events`、`stack_truncations` 和各种 overflow 计数；
-  它们不应在正常 workload 中占显著比例。
+- 检查 `overrun_events`、`overrun_ticks`、`dropped_events`、`unstable_events`、
+  `stack_truncations` 和各种 overflow 计数；它们不应在正常 workload 中占显著比例。
 
 最后用 pprof 检查函数、行号和源码：
 

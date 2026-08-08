@@ -126,10 +126,10 @@ main(void) {
 		},
 	};
 	lp_runtime_cpu_sample(runtime, cpu_generation, LP_VM_C,
-		sampled_cfunction, frames, 2, false, 2);
+		sampled_cfunction, frames, 2, false);
 	lp_runtime_cpu_sample(runtime, cpu_generation, LP_VM_C,
-		sampled_cfunction, frames, 2, false, 3);
-	lp_runtime_cpu_quality(runtime, cpu_generation, 4, 1, 2);
+		sampled_cfunction, frames, 2, false);
+	lp_runtime_cpu_quality(runtime, cpu_generation, 4, 1, 2, 3, 7);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		NULL, &host, 0, 64, true);
 	uint64_t weighted_space = 0;
@@ -214,8 +214,9 @@ main(void) {
 	assert(result.stats.pending_weight == 5);
 	assert(result.stats.state_c == 1);
 	assert(result.stats.samples == 2);
-	assert(result.stats.sample_weight == 5);
-	assert(result.stats.sample_c == 5);
+	assert(result.stats.sample_c == 2);
+	assert(result.stats.overrun_events == 3);
+	assert(result.stats.overrun_ticks == 7);
 	assert(result.stats.dropped_events == 4);
 	assert(result.stats.unstable_events == 1);
 	assert(result.stats.profiler_overhead_events == 2);
@@ -224,7 +225,7 @@ main(void) {
 	assert(lp_result_cpu_sample(&result, 0, &sample));
 	assert(sample.state == LP_VM_C);
 	assert(sample.cfunction == sampled_cfunction);
-	assert(sample.weight == 5);
+	assert(sample.weight == 2);
 	assert(sample.depth == 2);
 	lp_cpu_frame_view frame;
 	assert(lp_result_cpu_frame(&result, 0, 0, &frame));

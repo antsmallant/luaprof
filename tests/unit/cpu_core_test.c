@@ -22,14 +22,13 @@ test_aggregate_bound(void) {
 	for (int line = 1; line <= 5000; ++line) {
 		frame.currentline = line;
 		lp_cpu_profile_record(profile, LP_VM_LUA, NULL, &frame, 1,
-			false, 1);
+			false);
 	}
 	lp_result_stats stats = { 0 };
 	lp_cpu_profile_merge_stats(profile, &stats);
-	assert(stats.samples == 5000);
-	assert(stats.sample_weight == 5000);
+	assert(stats.samples == lp_cpu_profile_sample_count(profile));
+	assert(stats.samples + stats.aggregate_overflows == 5000);
 	assert(stats.aggregate_overflows != 0);
-	assert(lp_cpu_profile_sample_count(profile) < 5000);
 	lp_cpu_profile_delete(profile);
 }
 
@@ -47,7 +46,7 @@ test_symbol_bound(void) {
 	for (uintptr_t identity = 1; identity <= 5000; ++identity) {
 		frame.function = (const void *)identity;
 		lp_cpu_profile_record(profile, LP_VM_LUA, NULL, &frame, 1,
-			false, 1);
+			false);
 	}
 	lp_result_stats stats = { 0 };
 	lp_cpu_profile_merge_stats(profile, &stats);
@@ -77,7 +76,7 @@ test_source_and_stack_bound(void) {
 			.currentline = (int)i + 1,
 		};
 	}
-	lp_cpu_profile_record(profile, LP_VM_LUA, NULL, frames, 65, false, 3);
+	lp_cpu_profile_record(profile, LP_VM_LUA, NULL, frames, 65, false);
 	lp_result_stats stats = { 0 };
 	lp_cpu_profile_merge_stats(profile, &stats);
 	assert(stats.stack_truncations == 1);
@@ -85,7 +84,7 @@ test_source_and_stack_bound(void) {
 	lp_cpu_sample_view sample;
 	assert(lp_cpu_profile_sample(profile, 0, &sample));
 	assert(sample.depth == 64);
-	assert(sample.weight == 3);
+	assert(sample.weight == 1);
 	lp_cpu_frame_view frame;
 	assert(lp_cpu_profile_frame(profile, 0, 0, &frame));
 	assert(frame.source != NULL);

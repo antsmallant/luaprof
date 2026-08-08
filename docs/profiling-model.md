@@ -106,19 +106,26 @@ native profiler。GC 和 host 状态使用 synthetic frame。
 
 主要统计字段：
 
-- `samples`：完成归因的 timer-tick 权重，包括 timer overrun。
-- `sample_lua`、`sample_c`、`sample_gc`、`sample_host`：按 VM 状态划分的权重。
-- `safe_points`、`pending_weight`：safe-point 消费次数和请求权重。
+- `samples`：成功进入可导出聚合的实际观测样本数。
+- `sample_lua`、`sample_c`、`sample_gc`、`sample_host`：按 VM 状态划分的有效样本数；
+  四者之和等于 `samples`。
+- `overrun_events`：`si_overrun > 0` 的 timer signal delivery 数。
+- `overrun_ticks`：所有 `si_overrun` 之和，即没有独立执行上下文、不能归因的 timer
+  到期次数。
+- `safe_points`、`pending_weight`：safe-point 消费次数和待处理的 timer delivery 数。
 - `state_lua`、`state_c`、`state_gc`、`state_host`：VM 状态切换次数。
-- `dropped_events`：固定 event ring 已满而丢失的 tick。
-- `unstable_events`：execution slot 发布竞争期间被拒绝的 tick。
-- `profiler_overhead_events`：采集 profile 数据期间到达的 tick。
-- `stale_events`：Skynet generation 或迁移边界拒绝的过期 tick。
+- `dropped_events`：固定 event ring 已满而丢失的实际 delivery 数。
+- `unstable_events`：execution slot 发布竞争期间被拒绝的实际 delivery 数。
+- `profiler_overhead_events`：采集 profile 数据期间到达的实际 delivery 数。
+- `stale_events`：Skynet generation 或迁移边界拒绝的实际 delivery 数。
 - `scheduler_workers`：Skynet target 实际使用过的 worker 数。
 - `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：有界存储的质量计数器。
 
-判断 CPU profile 是否健康时，应比较 `samples`、持续时间和配置频率，检查各状态占比，
-并确认 drop/overflow 可以忽略。过短的 profile 没有足够样本支撑结论。
+函数与 VM 状态占比使用“该函数或状态的有效样本数 / `samples`”。timer overrun
+对应时刻没有可用执行上下文，不会补权到 signal 实际送达时的栈；`samples/count` 与
+`cpu/nanoseconds` 都只由有效样本计算。判断 CPU profile 是否健康时，应比较 `samples`、
+持续时间和配置频率，检查 `overrun_ticks` 及各类 drop/overflow 是否可以忽略。overrun
+显著或 profile 过短时，结果不足以支撑精确占比结论。
 
 ## 3. 内存采样模型
 

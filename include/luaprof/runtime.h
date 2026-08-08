@@ -69,11 +69,12 @@ typedef struct lp_result_stats {
 	uint64_t inuse_objects;
 	uint64_t live_map_overflows;
 	uint64_t samples;
-	uint64_t sample_weight;
 	uint64_t sample_host;
 	uint64_t sample_lua;
 	uint64_t sample_c;
 	uint64_t sample_gc;
+	uint64_t overrun_events;
+	uint64_t overrun_ticks;
 	uint64_t dropped_events;
 	uint64_t unstable_events;
 	uint64_t profiler_overhead_events;
@@ -184,10 +185,10 @@ void lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
 	uint64_t weighted_objects);
 void lp_runtime_cpu_sample(lp_runtime *runtime, uint64_t generation,
 	lp_vm_state state, lp_lua_cfunction cfunction,
-	const lp_stack_frame *frames, size_t depth, bool truncated,
-	uint64_t weight);
+	const lp_stack_frame *frames, size_t depth, bool truncated);
 void lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
-	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead);
+	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead,
+	uint64_t overrun_events, uint64_t overrun_ticks);
 void lp_runtime_cpu_scheduler_quality(lp_runtime *runtime,
 	uint64_t generation, uint64_t stale, uint64_t workers);
 

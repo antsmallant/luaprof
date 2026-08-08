@@ -46,9 +46,11 @@ skynet.start(function()
 	assert(cpu_stats.scheduler_workers > 0)
 	io.stderr:write(string.format(
 		"luaprof skynet smoke: ok cpu=%d lua/c/gc=%d/%d/%d " ..
-		"drop/unstable=%d/%d workers=%d memory=%d inuse=%d\n",
+		"overrun=%d/%d drop/unstable=%d/%d workers=%d " ..
+		"memory=%d inuse=%d\n",
 		cpu_stats.samples, cpu_stats.sample_lua, cpu_stats.sample_c,
-		cpu_stats.sample_gc, cpu_stats.dropped_events,
+		cpu_stats.sample_gc, cpu_stats.overrun_events,
+		cpu_stats.overrun_ticks, cpu_stats.dropped_events,
 		cpu_stats.unstable_events, cpu_stats.scheduler_workers,
 		memory_stats.samples, memory_stats.inuse_space))
 	skynet.abort()

@@ -9,7 +9,6 @@ typedef struct lp_tick_event {
 	lua_State *state;
 	lp_vm_state vm_state;
 	lp_lua_cfunction cfunction;
-	unsigned int weight;
 } lp_tick_event;
 
 lp_thread_timer *lp_thread_timer_new(void);
@@ -22,6 +21,7 @@ void lp_thread_timer_begin_event_drain(lp_thread_timer *timer);
 void lp_thread_timer_end_event_drain(lp_thread_timer *timer);
 bool lp_thread_timer_next(lp_thread_timer *timer, lp_tick_event *event);
 void lp_thread_timer_take_quality(lp_thread_timer *timer, uint64_t *dropped,
-	uint64_t *unstable, uint64_t *profiler_overhead);
+	uint64_t *unstable, uint64_t *profiler_overhead,
+	uint64_t *overrun_events, uint64_t *overrun_ticks);
 
 #endif

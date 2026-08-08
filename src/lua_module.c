@@ -262,7 +262,7 @@ result_stats(lua_State *L) {
 	lua_setfield(L, -2, "kind");
 	lua_pushinteger(L, (lua_Integer)result->value.generation);
 	lua_setfield(L, -2, "generation");
-	lua_pushinteger(L, (lua_Integer)result->value.stats.sample_weight);
+	lua_pushinteger(L, (lua_Integer)result->value.stats.samples);
 	lua_setfield(L, -2, "samples");
 	lua_pushboolean(L, false);
 	lua_setfield(L, -2, "active");
@@ -290,6 +290,11 @@ result_stats(lua_State *L) {
 		lua_setfield(L, -2, "sample_c");
 		lua_pushinteger(L, (lua_Integer)result->value.stats.sample_gc);
 		lua_setfield(L, -2, "sample_gc");
+		lua_pushinteger(L,
+			(lua_Integer)result->value.stats.overrun_events);
+		lua_setfield(L, -2, "overrun_events");
+		lua_pushinteger(L, (lua_Integer)result->value.stats.overrun_ticks);
+		lua_setfield(L, -2, "overrun_ticks");
 		lua_pushinteger(L, (lua_Integer)result->value.stats.dropped_events);
 		lua_setfield(L, -2, "dropped_events");
 		lua_pushinteger(L, (lua_Integer)result->value.stats.unstable_events);

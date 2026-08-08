@@ -32,6 +32,8 @@ struct lp_thread_timer {
 	_Atomic uint64_t dropped;
 	_Atomic uint64_t unstable;
 	_Atomic uint64_t profiler_overhead;
+	_Atomic uint64_t overrun_events;
+	_Atomic uint64_t overrun_ticks;
 	_Atomic uint64_t slot_version;
 	_Atomic(lua_State *) slot_state;
 	_Atomic(lp_lua_cfunction) slot_cfunction;
@@ -51,9 +53,9 @@ static _Thread_local lp_thread_timer *active_thread_timer;
 static _Atomic(lp_thread_timer *) active_timers[LP_ACTIVE_TIMER_CAPACITY];
 
 static unsigned int
-event_weight(const siginfo_t *info) {
+event_overrun(const siginfo_t *info) {
 	int overrun = info == NULL ? 0 : info->si_overrun;
-	return overrun < 0 ? 1u : (unsigned int)overrun + 1u;
+	return overrun <= 0 ? 0u : (unsigned int)overrun;
 }
 
 static void
@@ -65,6 +67,15 @@ add_quality(_Atomic uint64_t *counter, uint64_t value) {
 			memory_order_relaxed, memory_order_relaxed)) {
 			return;
 		}
+	}
+}
+
+static void
+record_overrun(lp_thread_timer *timer, const siginfo_t *info) {
+	unsigned int overrun = event_overrun(info);
+	if (overrun != 0) {
+		add_quality(&timer->overrun_events, 1);
+		add_quality(&timer->overrun_ticks, overrun);
 	}
 }
 
@@ -92,16 +103,16 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		return;
 	}
 
-	unsigned int weight = event_weight(info);
+	record_overrun(timer, info);
 	if (atomic_load_explicit(&timer->draining_events, memory_order_acquire)) {
-		add_quality(&timer->profiler_overhead, weight);
+		add_quality(&timer->profiler_overhead, 1);
 		errno = saved_errno;
 		return;
 	}
 	uint64_t version = atomic_load_explicit(&timer->slot_version,
 		memory_order_acquire);
 	if ((version & 1u) != 0) {
-		add_quality(&timer->unstable, weight);
+		add_quality(&timer->unstable, 1);
 		errno = saved_errno;
 		return;
 	}
@@ -115,7 +126,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		memory_order_acquire) || L == NULL || vm_state < LP_VM_HOST ||
 		vm_state > LP_VM_GC ||
 		(vm_state == LP_VM_C && cfunction == NULL)) {
-		add_quality(&timer->unstable, weight);
+		add_quality(&timer->unstable, 1);
 		errno = saved_errno;
 		return;
 	}
@@ -125,7 +136,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	uint64_t read = atomic_load_explicit(&timer->read_sequence,
 		memory_order_acquire);
 	if (write - read >= LP_TICK_RING_CAPACITY) {
-		add_quality(&timer->dropped, weight);
+		add_quality(&timer->dropped, 1);
 	}
 	else {
 		lp_tick_event *event =
@@ -133,11 +144,10 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		event->state = L;
 		event->vm_state = (lp_vm_state)vm_state;
 		event->cfunction = cfunction;
-		event->weight = weight;
 		atomic_store_explicit(&timer->write_sequence, write + 1,
 			memory_order_release);
 	}
-	lua_profile_request(L, weight);
+	lua_profile_request(L, 1);
 	errno = saved_errno;
 }
 
@@ -344,7 +354,8 @@ lp_thread_timer_disarm(lp_thread_timer *timer) {
 			break;
 		}
 		if (info.si_code == SI_TIMER && info.si_value.sival_ptr == timer) {
-			add_quality(&timer->dropped, event_weight(&info));
+			record_overrun(timer, &info);
+			add_quality(&timer->dropped, 1);
 		}
 	}
 	if (active_thread_timer == timer) {
@@ -391,7 +402,8 @@ lp_thread_timer_end_event_drain(lp_thread_timer *timer) {
 
 void
 lp_thread_timer_take_quality(lp_thread_timer *timer, uint64_t *dropped,
-	uint64_t *unstable, uint64_t *profiler_overhead) {
+	uint64_t *unstable, uint64_t *profiler_overhead,
+	uint64_t *overrun_events, uint64_t *overrun_ticks) {
 	if (timer == NULL) {
 		return;
 	}
@@ -406,5 +418,13 @@ lp_thread_timer_take_quality(lp_thread_timer *timer, uint64_t *dropped,
 	if (profiler_overhead != NULL) {
 		*profiler_overhead = atomic_exchange_explicit(
 			&timer->profiler_overhead, 0, memory_order_relaxed);
+	}
+	if (overrun_events != NULL) {
+		*overrun_events = atomic_exchange_explicit(&timer->overrun_events, 0,
+			memory_order_relaxed);
+	}
+	if (overrun_ticks != NULL) {
+		*overrun_ticks = atomic_exchange_explicit(&timer->overrun_ticks, 0,
+			memory_order_relaxed);
 	}
 }

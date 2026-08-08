@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -136,7 +137,7 @@ test_lua_samples(void) {
 		"@cpu_lua_workload.lua");
 	lp_result result = stop_cpu(&vm, generation);
 	assert(result.stats.sample_lua >= 20);
-	assert(result.stats.sample_weight == result.stats.sample_lua +
+	assert(result.stats.samples == result.stats.sample_lua +
 		result.stats.sample_c + result.stats.sample_gc +
 		result.stats.sample_host);
 	assert(lp_result_cpu_sample_count(&result) != 0);
@@ -190,7 +191,7 @@ test_host_and_sleep(void) {
 	struct timespec sleep_time = { .tv_sec = 0, .tv_nsec = 100000000 };
 	assert(nanosleep(&sleep_time, NULL) == 0);
 	lp_result sleep = stop_cpu(&vm, generation);
-	assert(sleep.stats.sample_weight == 0);
+	assert(sleep.stats.samples == 0);
 	lp_result_dispose(&sleep);
 	vm_close(&vm);
 }
@@ -294,6 +295,29 @@ test_multiple_threads(void) {
 }
 
 static void
+test_timer_overrun_quality(void) {
+	test_vm vm;
+	vm_open(&vm);
+	uint64_t generation = start_cpu(&vm, 1000);
+	sigset_t set;
+	sigset_t previous;
+	sigemptyset(&set);
+	sigaddset(&set, SIGRTMAX - 2);
+	assert(pthread_sigmask(SIG_BLOCK, &set, &previous) == 0);
+	busy_for(UINT64_C(30000000));
+	assert(pthread_sigmask(SIG_SETMASK, &previous, NULL) == 0);
+	busy_for(UINT64_C(5000000));
+	lp_result result = stop_cpu(&vm, generation);
+	assert(result.stats.overrun_events >= 1);
+	assert(result.stats.overrun_ticks >= 1);
+	assert(result.stats.samples == result.stats.sample_host +
+		result.stats.sample_lua + result.stats.sample_c +
+		result.stats.sample_gc);
+	lp_result_dispose(&result);
+	vm_close(&vm);
+}
+
+static void
 test_repeated_stop(void) {
 	test_vm vm;
 	vm_open(&vm);
@@ -345,6 +369,7 @@ main(void) {
 	test_gc_samples();
 	test_known_hotspot_ratio();
 	test_multiple_threads();
+	test_timer_overrun_quality();
 	test_repeated_stop();
 	test_one_vm_per_thread();
 	test_delete_active_runtime();

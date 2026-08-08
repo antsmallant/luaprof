@@ -51,6 +51,8 @@ typedef struct lp_skynet_target {
 	_Atomic uint64_t unstable;
 	_Atomic uint64_t profiler_overhead;
 	_Atomic uint64_t stale;
+	_Atomic uint64_t overrun_events;
+	_Atomic uint64_t overrun_ticks;
 	_Atomic uint64_t worker_mask;
 	_Atomic bool draining_events;
 } lp_skynet_target;
@@ -191,9 +193,18 @@ target_wait_unpinned(const lp_skynet_target *target) {
 }
 
 static unsigned int
-event_weight(const siginfo_t *info) {
+event_overrun(const siginfo_t *info) {
 	int overrun = info == NULL ? 0 : info->si_overrun;
-	return overrun < 0 ? 1u : (unsigned int)overrun + 1u;
+	return overrun <= 0 ? 0u : (unsigned int)overrun;
+}
+
+static void
+record_overrun(lp_skynet_target *target, const siginfo_t *info) {
+	unsigned int overrun = event_overrun(info);
+	if (overrun != 0) {
+		add_quality(&target->overrun_events, 1);
+		add_quality(&target->overrun_ticks, overrun);
+	}
 }
 
 static bool
@@ -222,11 +233,12 @@ target_pin_session(lp_skynet_target *target, uint64_t token,
 
 static void
 record_slot_unstable(lp_skynet_target *target, uint64_t token,
-	unsigned int weight) {
+	const siginfo_t *info) {
 	if (target_pin_session(target, token,
 		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE) |
 		LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_STOPPING), NULL)) {
-		add_quality(&target->unstable, weight);
+		record_overrun(target, info);
+		add_quality(&target->unstable, 1);
 		target_unpin(target);
 	}
 }
@@ -248,7 +260,6 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		return;
 	}
 
-	unsigned int weight = event_weight(info);
 	lp_skynet_target *quality_target = atomic_load_explicit(
 		&worker->slot_quality_target, memory_order_acquire);
 	uint64_t quality_token = atomic_load_explicit(&worker->slot_quality_token,
@@ -256,7 +267,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	uint64_t version = atomic_load_explicit(&worker->slot_version,
 		memory_order_acquire);
 	if ((version & 1u) != 0) {
-		record_slot_unstable(quality_target, quality_token, weight);
+		record_slot_unstable(quality_target, quality_token, info);
 		errno = saved_errno;
 		return;
 	}
@@ -272,7 +283,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		memory_order_relaxed);
 	if (version != atomic_load_explicit(&worker->slot_version,
 		memory_order_acquire)) {
-		record_slot_unstable(quality_target, quality_token, weight);
+		record_slot_unstable(quality_target, quality_token, info);
 		errno = saved_errno;
 		return;
 	}
@@ -287,21 +298,22 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		errno = saved_errno;
 		return;
 	}
+	record_overrun(target, info);
 	if (pinned_state != LP_SKYNET_TARGET_ACTIVE) {
-		add_quality(&target->stale, weight);
+		add_quality(&target->stale, 1);
 		target_unpin(target);
 		errno = saved_errno;
 		return;
 	}
 	if (atomic_load_explicit(&target->draining_events, memory_order_acquire)) {
-		add_quality(&target->profiler_overhead, weight);
+		add_quality(&target->profiler_overhead, 1);
 		target_unpin(target);
 		errno = saved_errno;
 		return;
 	}
 	if (vm_state < 0 || vm_state > 3 ||
 		(vm_state == 2 && cfunction == NULL)) {
-		add_quality(&target->unstable, weight);
+		add_quality(&target->unstable, 1);
 		target_unpin(target);
 		errno = saved_errno;
 		return;
@@ -312,7 +324,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 	uint64_t read = atomic_load_explicit(&target->read_sequence,
 		memory_order_acquire);
 	if (write - read >= LP_SKYNET_RING_CAPACITY) {
-		add_quality(&target->dropped, weight);
+		add_quality(&target->dropped, 1);
 	}
 	else {
 		lp_skynet_tick_event *event =
@@ -320,7 +332,6 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		event->state = L;
 		event->vm_state = vm_state;
 		event->cfunction = cfunction;
-		event->weight = weight;
 		if (worker->worker_id < 64) {
 			atomic_fetch_or_explicit(&target->worker_mask,
 				UINT64_C(1) << worker->worker_id,
@@ -328,7 +339,7 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		}
 		atomic_store_explicit(&target->write_sequence, write + 1,
 			memory_order_release);
-		lua_profile_request(L, weight);
+		lua_profile_request(L, 1);
 	}
 	target_unpin(target);
 	errno = saved_errno;
@@ -471,7 +482,8 @@ discard_pending(lp_skynet_worker *worker, const sigset_t *set,
 		}
 		if (info.si_code == SI_TIMER &&
 			info.si_value.sival_ptr == worker && pinned) {
-			add_quality(&target->stale, event_weight(&info));
+			record_overrun(target, &info);
+			add_quality(&target->stale, 1);
 		}
 	}
 	if (pinned) {
@@ -759,6 +771,10 @@ api_target_start(uint32_t handle, lua_State *main_state,
 	atomic_store_explicit(&selected->profiler_overhead, 0,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->stale, 0, memory_order_relaxed);
+	atomic_store_explicit(&selected->overrun_events, 0,
+		memory_order_relaxed);
+	atomic_store_explicit(&selected->overrun_ticks, 0,
+		memory_order_relaxed);
 	atomic_store_explicit(&selected->worker_mask, 0,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->draining_events, false,
@@ -959,6 +975,10 @@ api_take_quality(uint64_t token, lp_skynet_quality *quality) {
 		&target->profiler_overhead, 0, memory_order_relaxed);
 	quality->stale = atomic_exchange_explicit(&target->stale, 0,
 		memory_order_relaxed);
+	quality->overrun_events = atomic_exchange_explicit(
+		&target->overrun_events, 0, memory_order_relaxed);
+	quality->overrun_ticks = atomic_exchange_explicit(
+		&target->overrun_ticks, 0, memory_order_relaxed);
 	quality->worker_mask = atomic_load_explicit(&target->worker_mask,
 		memory_order_relaxed);
 	target_unpin(target);
