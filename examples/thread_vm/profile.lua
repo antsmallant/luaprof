@@ -90,7 +90,7 @@ assert(cpu_stats.samples >= 50)
 assert(memory_stats.samples > 0)
 assert(memory_stats.inuse_space > 0)
 print(string.format(
-	"CPU samples=%d Lua/C/GC=%d/%d/%d overrun=%d/%d dropped=%d",
+	"CPU samples=%d Lua/C/GC=%d/%d/%d overrun_events/ticks=%d/%d dropped=%d",
 	cpu_stats.samples, cpu_stats.sample_lua, cpu_stats.sample_c,
 	cpu_stats.sample_gc, cpu_stats.overrun_events, cpu_stats.overrun_ticks,
 	cpu_stats.dropped_events))

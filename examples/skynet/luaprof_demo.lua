@@ -91,9 +91,10 @@ skynet.start(function()
 	assert(memory_stats.inuse_space > 0)
 	io.stderr:write(string.format(
 		"luaprof skynet demo: ok cpu=%d lua/c/gc=%d/%d/%d " ..
-		"workers=%d memory=%d inuse=%d\n",
+		"overrun_events/ticks=%d/%d workers=%d memory=%d inuse=%d\n",
 		cpu_stats.samples, cpu_stats.sample_lua, cpu_stats.sample_c,
-		cpu_stats.sample_gc, cpu_stats.scheduler_workers,
+		cpu_stats.sample_gc, cpu_stats.overrun_events,
+		cpu_stats.overrun_ticks, cpu_stats.scheduler_workers,
 		memory_stats.samples, memory_stats.inuse_space))
 	skynet.abort()
 end)

@@ -216,7 +216,7 @@ main(void) {
 		printf("%-12s %8.2f ms  %+6.2f%%  cpu=%" PRIu64
 			" (%.0fHz L/C/G/H=%" PRIu64 "/%" PRIu64 "/%" PRIu64
 			"/%" PRIu64 ", drop/unstable/overhead=%" PRIu64 "/%" PRIu64
-			"/%" PRIu64 ", overrun=%" PRIu64 "/%" PRIu64
+			"/%" PRIu64 ", overrun_events/ticks=%" PRIu64 "/%" PRIu64
 			") mem=%" PRIu64 " overflow=A/S/L=%" PRIu64
 			"/%" PRIu64 "/%" PRIu64 "\n", mode_names[mode], median_ms,
 			overhead * 100.0, stats[mode].cpu_samples, effective_hz,
