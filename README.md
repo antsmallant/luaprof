@@ -45,15 +45,15 @@ go tool pprof -top build/thread-vm-cpu.pb.gz
 File: luaprof
 luaprof CPU sampling profile
 Type: cpu
-Showing nodes accounting for 1.38s, 100% of 1.38s total
+Showing nodes accounting for 1.37s, 100% of 1.37s total
       flat  flat%   sum%        cum   cum%
-     0.66s 47.98% 47.98%      0.66s 47.98%  calculate_orders
-     0.31s 22.25% 70.23%      0.31s 22.25%  tostring [luaB_tostring]
-     0.25s 17.92% 88.15%      0.25s 17.92%  calculate_discounts
-     0.08s  6.07% 94.22%      0.08s  6.07%  [gc]
-     0.04s  3.18% 97.40%      0.10s  7.51%  build_temporary_batches
-     0.02s  1.73% 99.13%      0.34s 24.57%  format_event_labels
-     0.01s  0.87%   100%      0.02s  1.45%  build_retained_cache
+     0.67s 48.91% 48.91%      0.67s 48.91%  calculate_orders
+     0.28s 20.44% 69.34%      0.28s 20.44%  tostring [luaB_tostring]
+     0.24s 17.52% 86.86%      0.24s 17.52%  calculate_discounts
+     0.08s  5.84% 92.70%      0.08s  5.84%  [gc]
+     0.05s  3.65% 96.35%      0.33s 24.09%  format_event_labels
+     0.04s  2.92% 99.27%      0.10s  7.30%  build_temporary_batches
+     0.01s  0.73%   100%      0.02s  1.46%  build_retained_cache
 ```
 
 独立查看交互图时可使用 `go tool pprof -svg`。GitHub 不执行其中的

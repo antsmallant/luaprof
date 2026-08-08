@@ -460,23 +460,17 @@ thread-vm: $(BUILD_DIR)/thread-vm-smoke
 
 module: $(LUA_MODULE)
 
-example-thread-vm: module
-	LUA_CPATH="$(BUILD_DIR)/?.so;;" $(LUA_SRC)/lua \
-		examples/thread_vm/profile.lua \
-		$(BUILD_DIR)/thread-vm-cpu.pb.gz \
-		$(BUILD_DIR)/thread-vm-heap.pb.gz
+example-thread-vm: module tests/integration/thread_vm_example.sh
+	./tests/integration/thread_vm_example.sh \
+		"$(LUA_SRC)/lua" "$(BUILD_DIR)" "$(BUILD_DIR)"
 
-example-lua46: module-lua46
-	LUA_CPATH="$(LUA46_BUILD_DIR)/?.so;;" $(LUA46_SRC)/lua \
-		examples/thread_vm/profile.lua \
-		$(LUA46_BUILD_DIR)/thread-vm-cpu.pb.gz \
-		$(LUA46_BUILD_DIR)/thread-vm-heap.pb.gz
+example-lua46: module-lua46 tests/integration/thread_vm_example.sh
+	./tests/integration/thread_vm_example.sh \
+		"$(LUA46_SRC)/lua" "$(LUA46_BUILD_DIR)" "$(LUA46_BUILD_DIR)"
 
-example-lua55: module-lua55
-	LUA_CPATH="$(LUA55_BUILD_DIR)/?.so;;" $(LUA55_SRC)/lua \
-		examples/thread_vm/profile.lua \
-		$(LUA55_BUILD_DIR)/thread-vm-cpu.pb.gz \
-		$(LUA55_BUILD_DIR)/thread-vm-heap.pb.gz
+example-lua55: module-lua55 tests/integration/thread_vm_example.sh
+	./tests/integration/thread_vm_example.sh \
+		"$(LUA55_SRC)/lua" "$(LUA55_BUILD_DIR)" "$(LUA55_BUILD_DIR)"
 
 test: test-thread-vm test-runtime test-cpu-core test-memory-core test-lua-symbols test-pprof-exporter test-api test-vm-bridge test-cpu-sampling test-memory-sampling test-combined-sampling test-scheduler-sampling
 
@@ -588,8 +582,8 @@ test-scheduler-sampling: $(SCHEDULER_SAMPLING_TEST) $(SKYNET_SIGNAL_MASK_TEST)
 bench-disabled: $(DISABLED_BENCH)
 	$(DISABLED_BENCH)
 
-bench-combined: $(COMBINED_SAMPLING_BENCH)
-	$(COMBINED_SAMPLING_BENCH)
+bench-combined: $(COMBINED_SAMPLING_BENCH) tests/integration/combined_benchmark.sh
+	./tests/integration/combined_benchmark.sh $(COMBINED_SAMPLING_BENCH)
 
 bench-memory: $(MEMORY_TRACKING_BENCH)
 	$(MEMORY_TRACKING_BENCH)
@@ -600,20 +594,20 @@ bench-vm: $(VM_SAFE_POINT_BENCH)
 bench-lua46-vm: $(LUA46_VM_SAFE_POINT_BENCH)
 	$(LUA46_VM_SAFE_POINT_BENCH)
 
-bench-lua46-combined: $(LUA46_COMBINED_SAMPLING_BENCH)
-	$(LUA46_COMBINED_SAMPLING_BENCH)
+bench-lua46-combined: $(LUA46_COMBINED_SAMPLING_BENCH) tests/integration/combined_benchmark.sh
+	./tests/integration/combined_benchmark.sh $(LUA46_COMBINED_SAMPLING_BENCH)
 
 bench-lua55-vm: $(LUA55_VM_SAFE_POINT_BENCH)
 	$(LUA55_VM_SAFE_POINT_BENCH)
 
-bench-lua55-combined: $(LUA55_COMBINED_SAMPLING_BENCH)
-	$(LUA55_COMBINED_SAMPLING_BENCH)
+bench-lua55-combined: $(LUA55_COMBINED_SAMPLING_BENCH) tests/integration/combined_benchmark.sh
+	./tests/integration/combined_benchmark.sh $(LUA55_COMBINED_SAMPLING_BENCH)
 
 bench-skynet-vm: $(SKYNET_VM_SAFE_POINT_BENCH)
 	$(SKYNET_VM_SAFE_POINT_BENCH)
 
-bench-skynet-combined: $(SKYNET_COMBINED_SAMPLING_BENCH)
-	$(SKYNET_COMBINED_SAMPLING_BENCH)
+bench-skynet-combined: $(SKYNET_COMBINED_SAMPLING_BENCH) tests/integration/combined_benchmark.sh
+	./tests/integration/combined_benchmark.sh $(SKYNET_COMBINED_SAMPLING_BENCH)
 
 skynet: submodule-skynet skynet-module $(SKYNET_HOST_LIB)
 	$(MAKE) -C $(SKYNET_DIR) linux \

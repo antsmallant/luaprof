@@ -19,3 +19,4 @@ fi
 
 cat "$output"
 grep -Fq "$LUAPROF_EXPECT_OUTPUT" "$output"
+grep -Eq 'overrun_events/ticks=[0-9]+/[0-9]+' "$output"
