@@ -52,6 +52,32 @@ busy_cfunction(lua_State *L) {
 	return 0;
 }
 
+#if defined(LUAPROF_TESTING)
+enum coroutine_action {
+	COROUTINE_RETURN,
+	COROUTINE_YIELD,
+	COROUTINE_ERROR,
+};
+
+static int
+inject_coroutine_tick(lua_State *L) {
+	lp_thread_timer *timer = lua_touserdata(L, lua_upvalueindex(1));
+	int action = (int)lua_tointeger(L, lua_upvalueindex(2));
+	lp_thread_timer_test_inject_tick(timer, 0);
+	switch (action) {
+	case COROUTINE_RETURN:
+		return 0;
+	case COROUTINE_YIELD:
+		return lua_yield(L, 0);
+	case COROUTINE_ERROR:
+		return luaL_error(L, "expected coroutine failure");
+	default:
+		assert(0);
+		return 0;
+	}
+}
+#endif
+
 static void
 vm_open(test_vm *vm) {
 	memset(vm, 0, sizeof(*vm));
@@ -176,6 +202,25 @@ test_cfunction_samples(void) {
 	lp_result result = stop_cpu(&vm, generation);
 	assert(result.stats.sample_c >= 20);
 	assert(result_has_cfunction(&result, busy_cfunction, 1));
+	lp_result_dispose(&result);
+	vm_close(&vm);
+}
+
+static void
+test_real_timer_coroutine_lifetime(void) {
+	test_vm vm;
+	vm_open(&vm);
+	lua_State *co = lua_newthread(vm.L);
+	assert(co != NULL);
+	lua_pushcfunction(co, busy_cfunction);
+	lua_pushinteger(co, UINT64_C(50000000));
+	uint64_t generation = start_cpu(&vm, 1000);
+	int results = 0;
+	assert(lua_resume(co, NULL, 1, &results) == LUA_OK);
+	lua_pop(vm.L, 1);
+	assert(lua_gc(vm.L, LUA_GCCOLLECT) == 0);
+	lp_result result = stop_cpu(&vm, generation);
+	assert(result.stats.sample_c >= 10);
 	lp_result_dispose(&result);
 	vm_close(&vm);
 }
@@ -353,6 +398,53 @@ test_exact_timer_overrun_accounting(void) {
 	lp_result_dispose(&result);
 	vm_close(&vm);
 }
+
+static void
+run_coroutine_lifetime_case(test_vm *vm, enum coroutine_action action) {
+	lua_State *co = lua_newthread(vm->L);
+	assert(co != NULL);
+	lua_pushlightuserdata(co, vm->bridge.cpu_timer);
+	lua_pushinteger(co, action);
+	lua_pushcclosure(co, inject_coroutine_tick, 2);
+	int results = 0;
+	int status = lua_resume(co, NULL, 0, &results);
+	if (action == COROUTINE_RETURN) {
+		assert(status == LUA_OK);
+	}
+	else if (action == COROUTINE_YIELD) {
+		assert(status == LUA_YIELD);
+	}
+	else {
+		assert(status != LUA_OK && status != LUA_YIELD);
+	}
+
+	/* HOST transition must consume every event that still refers to co. */
+	lp_tick_event event;
+	assert(!lp_thread_timer_next(vm->bridge.cpu_timer, &event));
+	lua_pop(vm->L, 1);
+	assert(lua_gc(vm->L, LUA_GCCOLLECT) == 0);
+
+	/* Later host deliveries must use the non-collectable main thread. */
+	lp_thread_timer_test_inject_tick(vm->bridge.cpu_timer, 0);
+	assert(lp_thread_timer_next(vm->bridge.cpu_timer, &event));
+	assert(event.state == vm->L);
+	assert(event.vm_state == LP_VM_HOST);
+}
+
+static void
+test_coroutine_event_lifetime(void) {
+	test_vm vm;
+	vm_open(&vm);
+	uint64_t generation = start_cpu(&vm, 1);
+	run_coroutine_lifetime_case(&vm, COROUTINE_RETURN);
+	run_coroutine_lifetime_case(&vm, COROUTINE_YIELD);
+	run_coroutine_lifetime_case(&vm, COROUTINE_ERROR);
+	lp_result result = stop_cpu(&vm, generation);
+	assert(result.stats.samples == 3);
+	assert(result.stats.sample_c == 3);
+	lp_result_dispose(&result);
+	vm_close(&vm);
+}
 #endif
 
 static void
@@ -403,6 +495,7 @@ int
 main(void) {
 	test_lua_samples();
 	test_cfunction_samples();
+	test_real_timer_coroutine_lifetime();
 	test_host_and_sleep();
 	test_gc_samples();
 	test_known_hotspot_ratio();
@@ -410,6 +503,7 @@ main(void) {
 	test_timer_overrun_quality();
 #if defined(LUAPROF_TESTING)
 	test_exact_timer_overrun_accounting();
+	test_coroutine_event_lifetime();
 #endif
 	test_repeated_stop();
 	test_one_vm_per_thread();

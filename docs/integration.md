@@ -204,6 +204,8 @@ CPU recorder 的 `start()`、VM 执行和 `stop()` 必须位于该 VM 所属的�
 recorder 活动期间不能把 VM 迁移到其他线程。多个 thread-per-VM 可以分别 profile，当前
 进程最多同时注册 64 个 thread timer；同一线程不能同时运行两个 VM 的 CPU recorder。
 同一 VM 内的 coroutine 共享 bridge，可以正常采集。
+thread backend 会在 coroutine 交还 host 前清空仍引用它的 CPU event，host 可以按正常
+Lua 生命周期释放 coroutine，不需要为 profiler 保留额外强引用。
 
 ## 5. Skynet 项目接入
 

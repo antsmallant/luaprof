@@ -150,6 +150,23 @@ static void
 state_change(void *userdata, lua_State *L, int state,
 	lua_CFunction cfunction) {
 	lp_lua_bridge *bridge = userdata;
+	if (state == LP_VM_HOST && L != bridge->main_state &&
+		!scheduler_active(bridge)) {
+		/*
+		 * A pending event may still retain this coroutine.  The HOST
+		 * notification is the last bridge callback before the host can drop
+		 * its final reference, so quiesce delivery, move the published slot
+		 * to the main thread, and consume those events while L is still live.
+		 */
+		begin_event_drain(bridge);
+		lp_thread_timer_publish_state(bridge->cpu_timer,
+			bridge->main_state, LP_VM_HOST, NULL);
+		lp_runtime_state_change(bridge->runtime, bridge->cpu_generation, L,
+			LP_VM_HOST, NULL);
+		drain_thread_timer(bridge);
+		end_event_drain(bridge);
+		return;
+	}
 	if (scheduler_active(bridge)) {
 		bridge->scheduler_api->publish_state(bridge->scheduler_token, L, state,
 			(lp_skynet_lua_cfunction)cfunction);

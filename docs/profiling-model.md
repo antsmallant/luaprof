@@ -78,6 +78,10 @@ thread-per-VM backend 使用 `CLOCK_THREAD_CPUTIME_ID`。timer tick 只记录小
 快照，不在 signal handler 中遍历 Lua 或 native stack。recorder 在下一个 VM safe
 point 消费 pending tick 并捕获 Lua stack。
 
+coroutine 返回、yield 或 error 并交还宿主时，backend 会在该 coroutine 仍存活的
+HOST transition 中同步消费仍引用它的 event；transition 完成后的 host event 只引用
+VM 的 main state。因此 host 不需要为了 profiler 延长 coroutine 生命周期。
+
 因此采样权重对应实际 timer tick，但 stack 是该 tick 后第一个安全位置的 Lua stack。
 这种设计避免在异步信号中访问不稳定 VM 数据。VM 必须始终在启动 recorder 的 OS
 thread 上运行。
