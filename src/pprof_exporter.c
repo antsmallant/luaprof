@@ -635,24 +635,29 @@ build_cpu_samples(lp_export_model *model, const lp_result *result) {
 		else if (sample.state == LP_VM_GC) {
 			frames[depth++] = synthetic_desc("[gc]");
 		}
-		bool has_cfunction = false;
+		size_t captured_start = 0;
 		lp_frame_view captured[LP_EXPORT_STACK_DEPTH - 1u];
 		for (size_t j = 0; j < sample.depth; ++j) {
 			if (!lp_result_cpu_frame(result, i, j, &captured[j])) {
 				memset(&captured[j], 0, sizeof(captured[j]));
 				captured[j].kind = LP_FRAME_LUA;
 			}
-			if (sample.cfunction != NULL &&
+			/*
+			 * The CFunction is captured at signal delivery, while the stack is
+			 * captured later.  Frames above its first matching occurrence were
+			 * entered after the tick and cannot be the sampled leaf.
+			 */
+			if (sample.state == LP_VM_C && sample.cfunction != NULL &&
+				captured_start == 0 &&
 				captured[j].kind == LP_FRAME_C &&
 				captured[j].cfunction == sample.cfunction) {
-				has_cfunction = true;
+				captured_start = j + 1u;
 			}
 		}
-		if (sample.state == LP_VM_C && sample.cfunction != NULL &&
-			!has_cfunction) {
+		if (sample.state == LP_VM_C && sample.cfunction != NULL) {
 			frames[depth++] = cfunction_desc(sample.cfunction);
 		}
-		for (size_t j = 0; j < sample.depth &&
+		for (size_t j = captured_start; j < sample.depth &&
 			depth < LP_EXPORT_STACK_DEPTH; ++j) {
 			frames[depth++] = captured[j].source == NULL &&
 				captured[j].function == NULL &&

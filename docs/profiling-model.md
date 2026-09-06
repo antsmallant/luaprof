@@ -86,6 +86,12 @@ VM 的 main state。因此 host 不需要为了 profiler 延长 coroutine 生命
 这种设计避免在异步信号中访问不稳定 VM 数据。VM 必须始终在启动 recorder 的 OS
 thread 上运行。
 
+对于 CFunction 样本，signal delivery 时保存的 CFunction 是权威 leaf。若延迟栈中仍有
+该 C frame，导出会裁掉它上方在 tick 后才进入的 callback frame；callback 只有在自身执行
+期间收到的 timer delivery 才获得 flat 样本。若原 C frame 已经 return、yield 或 error
+unwind，CFunction leaf 仍然准确，但返回后捕获的 Lua caller 只代表 best-effort 调用路径。
+同一 CFunction 递归或重新进入时也不能仅凭函数指针区分具体 frame。
+
 ### 2.3 Skynet service
 
 Skynet backend 是进程级基础设施，但 profile target 是单个 service：

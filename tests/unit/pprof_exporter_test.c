@@ -33,6 +33,7 @@ typedef struct profile_summary {
 	bool saw_memory_source;
 	bool saw_cfunction;
 	bool saw_raw_cfunction;
+	bool saw_post_tick_callback;
 } profile_summary;
 
 static int
@@ -360,6 +361,9 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 					bytes_contain(message, length, "profiled_cfunction");
 				summary->saw_raw_cfunction |=
 					bytes_contain(message, length, "lua_CFunction@0x1");
+				summary->saw_post_tick_callback |=
+					bytes_contain(message, length, "innocent_callback") ||
+					bytes_contain(message, length, "later_callback");
 			}
 			else {
 				summary->saw_period_type = true;
@@ -461,6 +465,84 @@ cpu_result(void) {
 		&frame, 1, false);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, unresolved_cfunction(),
 		&frame, 1, false);
+	lp_stack_frame callback_frames[] = {
+		{
+			.kind = LP_FRAME_LUA,
+			.function = &callback_frames,
+			.source = "@post_tick.lua",
+			.source_length = sizeof("@post_tick.lua") - 1,
+			.name = "innocent_callback",
+			.name_length = sizeof("innocent_callback") - 1,
+			.linedefined = 20,
+			.currentline = 21,
+		},
+		{
+			.kind = LP_FRAME_C,
+			.cfunction = profiled_cfunction,
+			.linedefined = -1,
+			.currentline = -1,
+		},
+		{
+			.kind = LP_FRAME_LUA,
+			.function = runtime,
+			.source = "@post_tick.lua",
+			.source_length = sizeof("@post_tick.lua") - 1,
+			.name = "outer_caller",
+			.name_length = sizeof("outer_caller") - 1,
+			.linedefined = 10,
+			.currentline = 12,
+		},
+	};
+	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, profiled_cfunction,
+		callback_frames, sizeof(callback_frames) / sizeof(callback_frames[0]),
+		false);
+	lp_stack_frame repeated_frames[] = {
+		{
+			.kind = LP_FRAME_LUA,
+			.function = &repeated_frames,
+			.source = "@repeated_c.lua",
+			.source_length = sizeof("@repeated_c.lua") - 1,
+			.name = "later_callback",
+			.name_length = sizeof("later_callback") - 1,
+			.linedefined = 30,
+			.currentline = 31,
+		},
+		{
+			.kind = LP_FRAME_C,
+			.cfunction = profiled_cfunction,
+			.linedefined = -1,
+			.currentline = -1,
+		},
+		{
+			.kind = LP_FRAME_LUA,
+			.function = runtime,
+			.source = "@repeated_c.lua",
+			.source_length = sizeof("@repeated_c.lua") - 1,
+			.name = "recursive_caller",
+			.name_length = sizeof("recursive_caller") - 1,
+			.linedefined = 20,
+			.currentline = 22,
+		},
+		{
+			.kind = LP_FRAME_C,
+			.cfunction = profiled_cfunction,
+			.linedefined = -1,
+			.currentline = -1,
+		},
+		{
+			.kind = LP_FRAME_LUA,
+			.function = &frame,
+			.source = "@repeated_c.lua",
+			.source_length = sizeof("@repeated_c.lua") - 1,
+			.name = "recursive_root",
+			.name_length = sizeof("recursive_root") - 1,
+			.linedefined = 10,
+			.currentline = 12,
+		},
+	};
+	lp_runtime_cpu_sample(runtime, generation, LP_VM_C, profiled_cfunction,
+		repeated_frames, sizeof(repeated_frames) / sizeof(repeated_frames[0]),
+		false);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_GC, NULL, &frame, 1,
 		false);
 	lp_result result;
@@ -550,14 +632,25 @@ main(void) {
 	assert(summary.saw_cpu_source);
 	assert(summary.saw_cfunction);
 	assert(summary.saw_raw_cfunction);
-	assert(summary.value_totals[0] == 3);
-	assert(summary.value_totals[1] == UINT64_C(30000000));
+	assert(!summary.saw_post_tick_callback);
+	assert(summary.value_totals[0] == 5);
+	assert(summary.value_totals[1] == UINT64_C(50000000));
 	free(data);
 	char *folded = read_text(cpu_folded);
 	assert(strstr(folded, "cpu_work") != NULL);
 	assert(strstr(folded,
 		"visible.profiled [profiled_cfunction]") != NULL);
 	assert(strstr(folded, "lua_CFunction@0x1") != NULL);
+	assert(strstr(folded,
+		"cpu_work;visible.profiled [profiled_cfunction] 1\n") != NULL);
+	assert(strstr(folded, "cpu_work;lua_CFunction@0x1 1\n") != NULL);
+	assert(strstr(folded, "innocent_callback") == NULL);
+	assert(strstr(folded, "later_callback") == NULL);
+	assert(strstr(folded,
+		"outer_caller;visible.profiled [profiled_cfunction] 1\n") != NULL);
+	assert(strstr(folded,
+		"recursive_root;visible.profiled [profiled_cfunction];recursive_caller;"
+		"visible.profiled [profiled_cfunction] 1\n") != NULL);
 	free(folded);
 	lp_result_dispose(&cpu);
 
