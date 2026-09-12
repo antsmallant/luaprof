@@ -128,11 +128,13 @@ end_event_drain(lp_lua_bridge *bridge) {
 
 bool
 lp_lua_bridge_begin_profiler_work(lp_lua_bridge *bridge) {
-	if (bridge == NULL || !bridge->cpu_active) {
+	if (bridge == NULL) {
 		return false;
 	}
 	if (bridge->profiler_work_depth++ == 0) {
-		begin_event_drain(bridge);
+		if (bridge->cpu_active) {
+			begin_event_drain(bridge);
+		}
 	}
 	return true;
 }
@@ -211,6 +213,9 @@ static void
 allocation(void *userdata, lua_State *L,
 	const lua_ProfileAllocEvent *event) {
 	lp_lua_bridge *bridge = userdata;
+	if (bridge->profiler_work_depth != 0) {
+		return;
+	}
 	bool entered = lp_lua_bridge_begin_profiler_work(bridge);
 	lp_runtime_allocation(bridge->runtime, bridge->memory_generation, L,
 		event->old_pointer, event->new_pointer, event->old_size,
@@ -294,6 +299,10 @@ start_collector(void *userdata, lp_runtime *runtime,
 			bridge->cpu_timer = NULL;
 			return status;
 		}
+	}
+	if (config->kind == LP_COLLECTOR_CPU &&
+		bridge->profiler_work_depth == 0) {
+		end_event_drain(bridge);
 	}
 	return LP_OK;
 }

@@ -20,6 +20,7 @@ int luaopen_luaprof(lua_State *L);
 static lp_thread_timer *active_timer;
 static char armed_point[32];
 static bool armed_error;
+static bool inject_after_arm;
 
 lp_status __real_lp_thread_timer_arm(lp_thread_timer *timer,
 	uint32_t sample_hz);
@@ -29,6 +30,10 @@ __wrap_lp_thread_timer_arm(lp_thread_timer *timer, uint32_t sample_hz) {
 	lp_status status = __real_lp_thread_timer_arm(timer, sample_hz);
 	if (status == LP_OK) {
 		active_timer = timer;
+		if (inject_after_arm) {
+			inject_after_arm = false;
+			lp_thread_timer_test_inject_tick(timer, 0);
+		}
 	}
 	return status;
 }
@@ -54,6 +59,14 @@ arm_test_point(lua_State *L) {
 	assert(strlen(name) < sizeof(armed_point));
 	(void)snprintf(armed_point, sizeof(armed_point), "%s", name);
 	armed_error = lua_toboolean(L, 2) != 0;
+	return 0;
+}
+
+static int
+arm_cpu_start_tick(lua_State *L) {
+	(void)L;
+	assert(!inject_after_arm);
+	inject_after_arm = true;
 	return 0;
 }
 
@@ -91,6 +104,8 @@ main(void) {
 	lua_setglobal(L, "arm_test_point");
 	lua_pushcfunction(L, inject_business_tick);
 	lua_setglobal(L, "inject_business_tick");
+	lua_pushcfunction(L, arm_cpu_start_tick);
+	lua_setglobal(L, "arm_cpu_start_tick");
 	lua_pushstring(L, output_path);
 	lua_setglobal(L, "profiler_output_path");
 
@@ -98,6 +113,7 @@ main(void) {
 		"local luaprof = require('luaprof')\n"
 		"local frozen = assert(luaprof.memory.start({ sample_bytes = 1 }))\n"
 		"frozen = assert(frozen:stop())\n"
+		"arm_cpu_start_tick()\n"
 		"local cpu = assert(luaprof.cpu.start({ sample_hz = 1 }))\n"
 		"arm_test_point('memory_start', false)\n"
 		"local memory = assert(luaprof.memory.start({ sample_bytes = 1 }))\n"
@@ -111,13 +127,15 @@ main(void) {
 		"local ok, err = pcall(frozen.stats, frozen)\n"
 		"assert(not ok and err:match('injected profiler API failure'))\n"
 		"inject_business_tick()\n"
+		"arm_test_point('cpu_stop', false)\n"
 		"local stats = assert(cpu:stop()):stats()\n"
 		"assert(stats.samples == 1, stats.samples)\n"
 		"assert(stats.sample_c == 1, stats.sample_c)\n"
-		"assert(stats.profiler_overhead_events == 5,\n"
+		"assert(stats.profiler_overhead_events == 7,\n"
 		"  stats.profiler_overhead_events)\n");
 
 	assert(armed_point[0] == '\0');
+	assert(!inject_after_arm);
 	lua_close(L);
 	assert(unlink(output_path) == 0);
 	puts("luaprof Lua API profiler work: ok");

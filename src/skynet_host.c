@@ -849,7 +849,7 @@ api_target_start(uint32_t handle, lua_State *main_state,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->worker_mask, 0,
 		memory_order_relaxed);
-	atomic_store_explicit(&selected->draining_events, false,
+	atomic_store_explicit(&selected->draining_events, true,
 		memory_order_relaxed);
 	if (!target_transition(selected, LP_SKYNET_TARGET_FREE,
 		LP_SKYNET_TARGET_ACTIVE)) {

@@ -27,6 +27,7 @@
 #define REUSE_HANDLE UINT32_C(0x600)
 #define TIMER_FAILURE_HANDLE UINT32_C(0x700)
 #define FIRST_ARM_FAILURE_HANDLE UINT32_C(0x800)
+#define START_GUARD_HANDLE UINT32_C(0x900)
 #define REUSE_ROUNDS 1000u
 
 typedef struct scheduler_test {
@@ -483,6 +484,40 @@ test_target_reuse_with_concurrent_dispatch(void) {
 }
 
 static void *
+start_guard_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(13);
+	lp_skynet_host_dispatch_enter(START_GUARD_HANDLE);
+	bool entered = lp_lua_bridge_begin_profiler_work(&test->bridge);
+	assert(entered);
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1 },
+	};
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_OK);
+	lp_skynet_host_test_inject_tick_now(0);
+	lp_lua_bridge_end_profiler_work(&test->bridge, entered);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_start_guard_covers_new_scheduler_target(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, start_guard_worker, &test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(test.result.stats.samples == 0);
+	assert(test.result.stats.profiler_overhead_events == 1);
+	close_test(&test);
+}
+
+static void *
 timer_failure_owner_worker(void *argument) {
 	scheduler_test *test = argument;
 	lp_skynet_host_worker_start(10);
@@ -577,6 +612,7 @@ main(void) {
 	test_memory_callback_is_profiler_overhead();
 	test_module_work_is_profiler_overhead();
 	test_target_reuse_with_concurrent_dispatch();
+	test_start_guard_covers_new_scheduler_target();
 	test_running_timer_failure_is_reported();
 	test_first_arm_failure_rolls_back_start();
 	puts("luaprof scheduler CPU sampling: ok");

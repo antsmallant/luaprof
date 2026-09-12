@@ -92,17 +92,20 @@ runtime_holder(lua_State *L) {
 	return holder;
 }
 
+static lp_runtime_holder *
+closure_runtime_holder(lua_State *L) {
+	return lua_touserdata(L, lua_upvalueindex(1));
+}
+
 static bool
 push_profiler_work_guard(lua_State *L) {
-	lua_rawgetp(L, LUA_REGISTRYINDEX, &runtime_registry_key);
-	if (!lua_isuserdata(L, -1)) {
-		lua_pop(L, 1);
+	/* Both upvalues refer to objects preallocated while loading the module. */
+	lp_lua_work_guard *guard = lua_touserdata(L, lua_upvalueindex(2));
+	if (guard == NULL) {
 		return false;
 	}
-	lua_getiuservalue(L, -1, 1);
-	lua_remove(L, -2);
-	lp_lua_work_guard *guard = lua_touserdata(L, -1);
-	if (guard == NULL || !lp_lua_bridge_begin_profiler_work(guard->bridge)) {
+	lua_pushvalue(L, lua_upvalueindex(2));
+	if (!lp_lua_bridge_begin_profiler_work(guard->bridge)) {
 		lua_pop(L, 1);
 		return false;
 	}
@@ -157,12 +160,12 @@ check_c_string(lua_State *L, int index, int argument, const char *name,
 }
 
 static lp_collector_config
-cpu_config(lua_State *L) {
+cpu_config(lua_State *L, int argument_count) {
 	lp_collector_config config = {
 		.kind = LP_COLLECTOR_CPU,
 		.value.cpu = { .sample_hz = LP_DEFAULT_SAMPLE_HZ },
 	};
-	if (lua_isnoneornil(L, 1)) {
+	if (argument_count == 0 || lua_isnil(L, 1)) {
 		return config;
 	}
 	luaL_checktype(L, 1, LUA_TTABLE);
@@ -181,7 +184,7 @@ cpu_config(lua_State *L) {
 }
 
 static lp_collector_config
-memory_config(lua_State *L) {
+memory_config(lua_State *L, int argument_count) {
 	lp_collector_config config = {
 		.kind = LP_COLLECTOR_MEMORY,
 		.value.memory = {
@@ -189,7 +192,7 @@ memory_config(lua_State *L) {
 			.track_free = false,
 		},
 	};
-	if (lua_isnoneornil(L, 1)) {
+	if (argument_count == 0 || lua_isnil(L, 1)) {
 		return config;
 	}
 
@@ -219,14 +222,14 @@ memory_config(lua_State *L) {
 
 static int
 start_recorder(lua_State *L, lp_collector_config config) {
-	lp_runtime_holder *holder = runtime_holder(L);
+	lp_runtime_holder *holder = closure_runtime_holder(L);
 	lp_lua_recorder *recorder = lua_newuserdatauv(L, sizeof(*recorder), 2);
 	recorder->runtime = holder->runtime;
 	recorder->kind = config.kind;
 	recorder->generation = 0;
 	recorder->active = false;
 	luaL_setmetatable(L, LP_RECORDER_METATABLE);
-	lua_pushvalue(L, -2);
+	lua_pushvalue(L, lua_upvalueindex(1));
 	lua_setiuservalue(L, -2, 1);
 	lp_lua_result *result = lua_newuserdatauv(L, sizeof(*result), 0);
 	memset(result, 0, sizeof(*result));
@@ -247,21 +250,24 @@ start_recorder(lua_State *L, lp_collector_config config) {
 
 static int
 cpu_start(lua_State *L) {
-	lp_collector_config config = cpu_config(L);
+	int argument_count = lua_gettop(L);
 	(void)push_profiler_work_guard(L);
+	lp_collector_config config = cpu_config(L, argument_count);
 	return start_recorder(L, config);
 }
 
 static int
 memory_start(lua_State *L) {
-	lp_collector_config config = memory_config(L);
+	int argument_count = lua_gettop(L);
 	(void)push_profiler_work_guard(L);
+	lp_collector_config config = memory_config(L, argument_count);
 	module_test_point(L, "memory_start");
 	return start_recorder(L, config);
 }
 
 static int
 recorder_stop(lua_State *L) {
+	(void)push_profiler_work_guard(L);
 	lp_lua_recorder *recorder = luaL_checkudata(L, 1,
 		LP_RECORDER_METATABLE);
 	if (!recorder->active) {
@@ -269,8 +275,10 @@ recorder_stop(lua_State *L) {
 		lua_pushliteral(L, "luaprof recorder is already stopped");
 		return 2;
 	}
-	if (recorder->kind != LP_COLLECTOR_CPU) {
-		(void)push_profiler_work_guard(L);
+	if (recorder->kind == LP_COLLECTOR_CPU) {
+		module_test_point(L, "cpu_stop");
+	}
+	else {
 		module_test_point(L, "memory_stop");
 	}
 
@@ -293,12 +301,10 @@ recorder_stop(lua_State *L) {
 
 static int
 recorder_gc(lua_State *L) {
+	(void)push_profiler_work_guard(L);
 	lp_lua_recorder *recorder = luaL_checkudata(L, 1,
 		LP_RECORDER_METATABLE);
 	if (recorder->active) {
-		if (recorder->kind != LP_COLLECTOR_CPU) {
-			(void)push_profiler_work_guard(L);
-		}
 		lp_result ignored = { 0 };
 		(void)lp_runtime_stop(recorder->runtime, L, recorder->kind,
 			recorder->generation, &ignored);
@@ -310,17 +316,17 @@ recorder_gc(lua_State *L) {
 
 static int
 result_gc(lua_State *L) {
-	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	(void)push_profiler_work_guard(L);
+	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	lp_result_dispose(&result->value);
 	return 0;
 }
 
 static int
 recorder_tostring(lua_State *L) {
+	(void)push_profiler_work_guard(L);
 	lp_lua_recorder *recorder = luaL_checkudata(L, 1,
 		LP_RECORDER_METATABLE);
-	(void)push_profiler_work_guard(L);
 	lua_pushfstring(L, "luaprof.%s.recorder(%s, generation=%I)",
 		kind_name(recorder->kind), recorder->active ? "active" : "stopped",
 		(lua_Integer)recorder->generation);
@@ -329,8 +335,8 @@ recorder_tostring(lua_State *L) {
 
 static int
 result_stats(lua_State *L) {
-	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	(void)push_profiler_work_guard(L);
+	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	module_test_point(L, "result_stats");
 	lua_createtable(L, 0, 7);
 	lua_pushstring(L, kind_name(result->value.kind));
@@ -444,12 +450,17 @@ result_stats(lua_State *L) {
 
 static int
 result_write(lua_State *L) {
+	int argument_count = lua_gettop(L);
+	(void)push_profiler_work_guard(L);
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
+	if (argument_count < 2) {
+		return luaL_argerror(L, 2, "path expected");
+	}
 	size_t path_length;
 	const char *path = check_c_string(L, 2, 2, "path", &path_length);
 	lp_export_format format = LP_EXPORT_PPROF;
 	const char *sample_type = NULL;
-	if (!lua_isnoneornil(L, 3)) {
+	if (argument_count >= 3 && !lua_isnil(L, 3)) {
 		luaL_checktype(L, 3, LUA_TTABLE);
 		check_no_unknown_options(L, 3, "format", "sample");
 		lua_getfield(L, 3, "format");
@@ -477,7 +488,6 @@ result_write(lua_State *L) {
 		}
 		lua_pop(L, 1);
 	}
-	(void)push_profiler_work_guard(L);
 	module_test_point(L, "result_write");
 	char error[256];
 	lp_lua_symbols *lua_symbols = lp_lua_symbols_collect(L);
@@ -500,15 +510,15 @@ result_write(lua_State *L) {
 
 static int
 result_tostring(lua_State *L) {
-	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	(void)push_profiler_work_guard(L);
+	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
 	lua_pushfstring(L, "luaprof.%s.result(generation=%I)",
 		kind_name(result->value.kind), (lua_Integer)result->value.generation);
 	return 1;
 }
 
 static void
-create_metatables(lua_State *L) {
+create_runtime_metatables(lua_State *L) {
 	if (luaL_newmetatable(L, LP_RUNTIME_METATABLE)) {
 		lua_pushcfunction(L, runtime_gc);
 		lua_setfield(L, -2, "__gc");
@@ -520,20 +530,37 @@ create_metatables(lua_State *L) {
 		lua_setfield(L, -2, "__close");
 	}
 	lua_pop(L, 1);
+}
+
+static void
+push_runtime_closure(lua_State *L, int holder_index, int guard_index,
+	lua_CFunction function) {
+	lua_pushvalue(L, holder_index);
+	lua_pushvalue(L, guard_index);
+	lua_pushcclosure(L, function, 2);
+}
+
+static void
+create_value_metatables(lua_State *L, int holder_index, int guard_index) {
+	holder_index = lua_absindex(L, holder_index);
+	guard_index = lua_absindex(L, guard_index);
 
 	if (luaL_newmetatable(L, LP_RECORDER_METATABLE)) {
 		static const luaL_Reg methods[] = {
 			{ "stop", recorder_stop },
 			{ NULL, NULL },
 		};
-		luaL_setfuncs(L, methods, 0);
+		lua_pushvalue(L, holder_index);
+		lua_pushvalue(L, guard_index);
+		luaL_setfuncs(L, methods, 2);
 		lua_pushvalue(L, -1);
 		lua_setfield(L, -2, "__index");
-		lua_pushcfunction(L, recorder_gc);
+		push_runtime_closure(L, holder_index, guard_index, recorder_gc);
 		lua_setfield(L, -2, "__gc");
-		lua_pushcfunction(L, recorder_gc);
+		push_runtime_closure(L, holder_index, guard_index, recorder_gc);
 		lua_setfield(L, -2, "__close");
-		lua_pushcfunction(L, recorder_tostring);
+		push_runtime_closure(L, holder_index, guard_index,
+			recorder_tostring);
 		lua_setfield(L, -2, "__tostring");
 	}
 	lua_pop(L, 1);
@@ -544,12 +571,15 @@ create_metatables(lua_State *L) {
 			{ "write", result_write },
 			{ NULL, NULL },
 		};
-		luaL_setfuncs(L, methods, 0);
+		lua_pushvalue(L, holder_index);
+		lua_pushvalue(L, guard_index);
+		luaL_setfuncs(L, methods, 2);
 		lua_pushvalue(L, -1);
 		lua_setfield(L, -2, "__index");
-		lua_pushcfunction(L, result_gc);
+		push_runtime_closure(L, holder_index, guard_index, result_gc);
 		lua_setfield(L, -2, "__gc");
-		lua_pushcfunction(L, result_tostring);
+		push_runtime_closure(L, holder_index, guard_index,
+			result_tostring);
 		lua_setfield(L, -2, "__tostring");
 	}
 	lua_pop(L, 1);
@@ -557,22 +587,27 @@ create_metatables(lua_State *L) {
 
 LUAMOD_API int
 luaopen_luaprof(lua_State *L) {
-	create_metatables(L);
+	create_runtime_metatables(L);
 	(void)runtime_holder(L);
-	lua_pop(L, 1);
+	int holder_index = lua_absindex(L, -1);
+	lua_getiuservalue(L, holder_index, 1);
+	int guard_index = lua_absindex(L, -1);
+	create_value_metatables(L, holder_index, guard_index);
 
 	lua_createtable(L, 0, 3);
 	lua_pushliteral(L, "0.1.0");
 	lua_setfield(L, -2, "_VERSION");
 
 	lua_createtable(L, 0, 1);
-	lua_pushcfunction(L, cpu_start);
+	push_runtime_closure(L, holder_index, guard_index, cpu_start);
 	lua_setfield(L, -2, "start");
 	lua_setfield(L, -2, "cpu");
 
 	lua_createtable(L, 0, 1);
-	lua_pushcfunction(L, memory_start);
+	push_runtime_closure(L, holder_index, guard_index, memory_start);
 	lua_setfield(L, -2, "start");
 	lua_setfield(L, -2, "memory");
+	lua_remove(L, guard_index);
+	lua_remove(L, holder_index);
 	return 1;
 }

@@ -22,6 +22,29 @@ assert(empty_memory_stats.alloc_objects == 0)
 assert(empty_memory_stats.inuse_space == 0)
 assert(empty_memory_stats.inuse_objects == 0)
 
+local function test_profiler_memory_exclusion()
+    local cpu_options = { sample_hz = 1 }
+    local memory_guard = assert(profile.memory.start {
+        sample_bytes = 1,
+        track_free = true,
+    })
+    local cpu_guard = assert(profile.cpu.start(cpu_options))
+    local cpu_guard_result = assert(cpu_guard:stop())
+    local cpu_guard_stats = cpu_guard_result:stats()
+    assert(cpu_guard_stats.kind == "cpu")
+    local memory_guard_result = assert(memory_guard:stop())
+    local memory_guard_stats = memory_guard_result:stats()
+    assert(memory_guard_stats.allocation_events == 0)
+    assert(memory_guard_stats.reallocation_events == 0)
+    assert(memory_guard_stats.free_events == 0)
+    assert(memory_guard_stats.samples == 0)
+    assert(memory_guard_stats.alloc_space == 0)
+    assert(memory_guard_stats.alloc_objects == 0)
+    assert(memory_guard_stats.inuse_space == 0)
+    assert(memory_guard_stats.inuse_objects == 0)
+end
+test_profiler_memory_exclusion()
+
 do
     local abandoned_memory <close> = assert(profile.memory.start {
         sample_bytes = 1,

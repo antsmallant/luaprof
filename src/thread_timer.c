@@ -268,6 +268,7 @@ lp_thread_timer_new(void) {
 		return NULL;
 	}
 	atomic_init(&timer->slot_vm_state, LP_VM_HOST);
+	atomic_init(&timer->draining_events, true);
 	timer->signal_slot = -1;
 	return timer;
 }

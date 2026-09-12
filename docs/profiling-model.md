@@ -49,6 +49,12 @@ Lua module 在 collector 启动前预留 stop 所需的 result userdata，因此
 当前 memory recording 计为 allocation 或 sampled live object。空 workload 在
 `sample_bytes = 1`、`track_free = true` 下仍保持零 alloc-space 和零 in-use。
 
+同一个可嵌套 profiler-work guard 也排除其他 luaprof API 函数体创建的 Lua 对象。例如
+memory recorder 活跃时启动/停止 CPU recorder 或保留 `result:stats()` 返回 table，不会把
+这些控制对象计入 memory profile。Lua 在进入 C API 前为调用方表达式创建的对象（例如现场
+构造的 options table）仍属于被测 Lua workload；需要测量纯 API 内部开销时，应在启动
+memory recorder 之前构造并复用 options。
+
 停止后的 result 持有冻结的 profile：
 
 - `result:stats()`：返回计数器和质量元数据。
@@ -148,8 +154,11 @@ native profiler。GC 和 host 状态使用 synthetic frame。
 - `dropped_events`：固定 event ring 已满而丢失的实际 delivery 数。
 - `unstable_events`：execution slot 发布竞争期间被拒绝的实际 delivery 数。
 - `profiler_overhead_events`：CPU safe-point drain、同步 memory allocation callback，或
-  Lua profiler API 的启动、停止、统计和导出等管理工作期间到达、因而不归入业务栈的
-  实际 delivery 数。保护区支持嵌套，并在 Lua error/OOM 展开 C 调用栈时自动退出。
+  Lua profiler API guard 内的启动、停止、统计和导出等管理工作期间到达、因而不归入业务栈
+  的实际 delivery 数。新 CPU backend 在首次 arm/publish 前即处于 guard 状态，stop 也在
+  disarm/quiesce 前进入 guard。保护区支持嵌套，并在 Lua error/OOM 展开 C 调用栈时自动退出。
+  Lua 参数表达式在进入 CFunction 前执行；CFunction 进入 guard 前及 guard close 后的状态切换
+  仍是极窄的正常采样边界，不计为 profiler overhead。
 - `stale_events`：Skynet generation 或迁移边界拒绝的实际 delivery 数。
 - `timer_failures`：Skynet worker timer 的 arm/disarm 系统调用失败次数。非零表示采样源曾
   不可用，profile 可能存在缺口；首次 target 启动的 arm 失败会直接令启动失败，不产生
