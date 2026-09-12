@@ -498,20 +498,9 @@ lp_memory_profile_record(lp_memory_profile *profile,
 		depth = LP_MEMORY_MAX_STACK_DEPTH;
 		truncated = true;
 	}
-	profile->stats.memory_samples = saturating_add(
-		profile->stats.memory_samples, 1);
-	profile->stats.sampled_alloc_bytes = saturating_add(
-		profile->stats.sampled_alloc_bytes, allocation_size);
-	profile->stats.alloc_space = saturating_add(
-		profile->stats.alloc_space, weighted_space);
-	profile->stats.alloc_objects = saturating_add(
-		profile->stats.alloc_objects, weighted_objects);
-	if (truncated) {
-		profile->stats.stack_truncations = saturating_add(
-			profile->stats.stack_truncations, 1);
-	}
 
 	lp_compact_frame compact[LP_MEMORY_MAX_STACK_DEPTH];
+	uint32_t aggregate_index;
 	uint64_t hash = UINT64_C(1469598103934665603);
 	for (size_t i = 0; i < depth; ++i) {
 		compact[i].symbol = intern_symbol(profile, &frames[i]);
@@ -533,9 +522,8 @@ lp_memory_profile_record(lp_memory_profile *profile,
 					aggregate->sampled_bytes, allocation_size);
 				aggregate->sample_count = saturating_add(
 					aggregate->sample_count, 1);
-				add_live(profile, allocation_pointer, (uint32_t)index,
-					weighted_space, weighted_objects);
-				return;
+				aggregate_index = (uint32_t)index;
+				goto recorded;
 			}
 			continue;
 		}
@@ -548,12 +536,28 @@ lp_memory_profile_record(lp_memory_profile *profile,
 		aggregate->depth = (uint16_t)depth;
 		memcpy(aggregate->frames, compact, depth * sizeof(compact[0]));
 		profile->aggregate_count++;
-		add_live(profile, allocation_pointer, (uint32_t)index,
-			weighted_space, weighted_objects);
-		return;
+		aggregate_index = (uint32_t)index;
+		goto recorded;
 	}
 	profile->stats.aggregate_overflows = saturating_add(
 		profile->stats.aggregate_overflows, 1);
+	return;
+
+recorded:
+	profile->stats.memory_samples = saturating_add(
+		profile->stats.memory_samples, 1);
+	profile->stats.sampled_alloc_bytes = saturating_add(
+		profile->stats.sampled_alloc_bytes, allocation_size);
+	profile->stats.alloc_space = saturating_add(
+		profile->stats.alloc_space, weighted_space);
+	profile->stats.alloc_objects = saturating_add(
+		profile->stats.alloc_objects, weighted_objects);
+	if (truncated) {
+		profile->stats.stack_truncations = saturating_add(
+			profile->stats.stack_truncations, 1);
+	}
+	add_live(profile, allocation_pointer, aggregate_index, weighted_space,
+		weighted_objects);
 }
 
 void

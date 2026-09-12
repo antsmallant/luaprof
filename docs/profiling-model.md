@@ -198,14 +198,24 @@ Lua 重新分配自身 VM stack 时，call-frame 指针暂时不可用。被选�
 - `allocation_events`、`reallocation_events`、`free_events`：recording 期间精确的
   allocator event 数。
 - `allocation_failures`：失败 allocation/realloc 数。
-- `samples`、`sampled_alloc_bytes`：原始入选 event 数和 requested bytes。
-- `alloc_space`、`alloc_objects`：概率加权后的 allocation 估算。
+- `samples`、`sampled_alloc_bytes`：成功进入可导出 aggregate 的入选 event 数和 requested
+  bytes。
+- `alloc_space`、`alloc_objects`：这些可导出 event 概率加权后的 allocation 估算。
 - `inuse_space`、`inuse_objects`：停止时仍存活的加权 sampled block。
 - `live_map_overflows`：未能进入 in-use tracking 的 sampled live block。
-- `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：质量计数器。
+- `stack_truncations`：已保留样本中发生 stack 截断的 event 数。
+- `aggregate_overflows`：aggregate 表满后无法保留的入选 event 数；这些 event 不进入
+  `samples`、bytes/object totals 或 live tracking。
+- `symbol_overflows`：symbol/source 有界存储发生截断或耗尽的次数。
 
-查看 in-use 结论前应确认 `track_free = true`、`live_map_overflows == 0`，并判断原始
-`samples` 是否足够。少量大对象或短 recording 可能有明显采样方差。
+`result:stats()` 的六个 memory totals 与同一 result 的可导出 aggregates 守恒：遍历样本
+所得 `sample_count`、`sampled_bytes`、`alloc_space`、`alloc_objects`、`inuse_space` 和
+`inuse_objects` 之和分别等于对应 stats。未发生计数饱和时，实际入选 event 数为
+`samples + aggregate_overflows`；overflow event 的权重没有保存，不能从计数器恢复。
+
+查看 alloc-space 或 in-use 结论前应确认 `aggregate_overflows == 0`；查看 in-use 时还应确认
+`track_free = true`、`live_map_overflows == 0`，并判断 `samples` 是否足够。任一相关 overflow
+非零都表示 profile 不完整，少量大对象或短 recording 也可能有明显采样方差。
 
 ## 4. 导出与 pprof
 

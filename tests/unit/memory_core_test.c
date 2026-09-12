@@ -32,6 +32,34 @@ test_frame(int line) {
 }
 
 static void
+assert_exported_totals_match_stats(lp_memory_profile *profile) {
+	lp_result_stats stats = { 0 };
+	lp_memory_profile_merge_stats(profile, &stats);
+	uint64_t sample_count = 0;
+	uint64_t sampled_bytes = 0;
+	uint64_t alloc_space = 0;
+	uint64_t alloc_objects = 0;
+	uint64_t inuse_space = 0;
+	uint64_t inuse_objects = 0;
+	for (size_t i = 0; i < lp_memory_profile_sample_count(profile); ++i) {
+		lp_memory_sample_view sample;
+		assert(lp_memory_profile_sample(profile, i, &sample));
+		sample_count += sample.sample_count;
+		sampled_bytes += sample.sampled_bytes;
+		alloc_space += sample.alloc_space;
+		alloc_objects += sample.alloc_objects;
+		inuse_space += sample.inuse_space;
+		inuse_objects += sample.inuse_objects;
+	}
+	assert(stats.memory_samples == sample_count);
+	assert(stats.sampled_alloc_bytes == sampled_bytes);
+	assert(stats.alloc_space == alloc_space);
+	assert(stats.alloc_objects == alloc_objects);
+	assert(stats.inuse_space == inuse_space);
+	assert(stats.inuse_objects == inuse_objects);
+}
+
+static void
 test_interval_and_probability(void) {
 	assert(lp_memory_geometric_interval(1, 0) == 1);
 	assert(lp_memory_geometric_interval(1, UINT64_MAX) == 1);
@@ -103,6 +131,7 @@ test_budget_and_exact_mode(void) {
 	assert(view.source_length == sizeof("@memory_core_test.lua") - 1);
 	assert(view.name_length == sizeof("memory_work") - 1);
 	assert(memcmp(view.name, "memory_work", view.name_length) == 0);
+	assert_exported_totals_match_stats(exact);
 	lp_memory_profile_delete(exact);
 }
 
@@ -142,6 +171,7 @@ test_weighted_convergence(void) {
 	double object_ratio = (double)objects[1] / (double)objects[0];
 	assert(space_ratio > 3.8 && space_ratio < 4.2);
 	assert(object_ratio > 0.95 && object_ratio < 1.05);
+	assert_exported_totals_match_stats(profile);
 	lp_memory_profile_delete(profile);
 }
 
@@ -149,25 +179,37 @@ static void
 test_bounds_and_large_allocation(void) {
 	lp_memory_profile *profile = lp_memory_profile_new(1, 23, false);
 	assert(profile != NULL);
-	for (int line = 0; line < 2049; ++line) {
+	for (int line = 0; line < 2048; ++line) {
 		lp_stack_frame frame = test_frame(line);
 		uint64_t space;
 		uint64_t objects;
 		assert(lp_memory_profile_should_sample(profile, 1, &space,
 			&objects));
-		lp_memory_profile_record(profile, NULL, &frame, 1, false, 1, space,
-			objects);
+		lp_memory_profile_record(profile, NULL, &frame, 1, line == 0, 1,
+			space, objects);
 	}
+	uint64_t space;
+	uint64_t objects;
+	lp_stack_frame overflow_frame = test_frame(2048);
+	assert(lp_memory_profile_should_sample(profile, 100000000, &space,
+		&objects));
+	assert(space == 100000000 && objects == 1);
+	lp_memory_profile_record(profile, NULL, &overflow_frame, 1, true,
+		100000000, space, objects);
 	lp_result_stats stats = { 0 };
 	lp_memory_profile_merge_stats(profile, &stats);
-	assert(stats.memory_samples == 2049);
+	assert(stats.memory_samples == 2048);
+	assert(stats.sampled_alloc_bytes == 2048);
+	assert(stats.alloc_space == 2048);
+	assert(stats.alloc_objects == 2048);
 	assert(stats.aggregate_overflows == 1);
+	assert(stats.stack_truncations == 1);
+	assert(stats.memory_samples + stats.aggregate_overflows == 2049);
+	assert_exported_totals_match_stats(profile);
 	lp_memory_profile_delete(profile);
 
 	profile = lp_memory_profile_new(1024, 29, false);
 	assert(profile != NULL);
-	uint64_t space;
-	uint64_t objects;
 	assert(lp_memory_profile_should_sample(profile, UINT32_MAX, &space,
 		&objects));
 	assert(space >= UINT32_MAX);
@@ -178,6 +220,7 @@ test_bounds_and_large_allocation(void) {
 	memset(&stats, 0, sizeof(stats));
 	lp_memory_profile_merge_stats(profile, &stats);
 	assert(stats.memory_samples == 1);
+	assert_exported_totals_match_stats(profile);
 	lp_memory_profile_delete(profile);
 }
 
@@ -214,6 +257,7 @@ test_live_tracking_lifecycle(void) {
 	assert(stats.alloc_space == 40);
 	assert(stats.inuse_space == 0);
 	assert(stats.inuse_objects == 0);
+	assert_exported_totals_match_stats(disabled);
 	lp_memory_profile_delete(disabled);
 
 	lp_memory_profile *profile = lp_memory_profile_new(1, 37, true);
@@ -263,10 +307,12 @@ test_live_tracking_lifecycle(void) {
 			assert(sample.inuse_objects == 0);
 		}
 	}
+	assert_exported_totals_match_stats(profile);
 	lp_memory_profile_finish(profile);
 	assert(!lp_memory_profile_tracks_live(profile));
 	stats = memory_stats(profile);
 	assert(stats.inuse_space == 60 && stats.inuse_objects == 1);
+	assert_exported_totals_match_stats(profile);
 	lp_memory_profile_delete(profile);
 }
 
@@ -295,6 +341,7 @@ test_live_tracking_capacity(void) {
 	assert(stats.inuse_space == capacity);
 	assert(stats.inuse_objects == capacity);
 	assert(stats.live_map_overflows == 1);
+	assert_exported_totals_match_stats(profile);
 	lp_memory_profile_delete(profile);
 }
 
