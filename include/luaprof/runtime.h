@@ -85,6 +85,7 @@ typedef struct lp_result_stats {
 	uint64_t unstable_events;
 	uint64_t profiler_overhead_events;
 	uint64_t stale_events;
+	uint64_t timer_failures;
 	uint64_t scheduler_workers;
 	uint64_t stack_truncations;
 	uint64_t aggregate_overflows;
@@ -196,7 +197,8 @@ void lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
 	uint64_t dropped, uint64_t unstable, uint64_t profiler_overhead,
 	uint64_t overrun_events, uint64_t overrun_ticks);
 void lp_runtime_cpu_scheduler_quality(lp_runtime *runtime,
-	uint64_t generation, uint64_t stale, uint64_t workers);
+	uint64_t generation, uint64_t stale, uint64_t timer_failures,
+	uint64_t workers);
 
 void lp_result_dispose(lp_result *result);
 size_t lp_result_cpu_sample_count(const lp_result *result);

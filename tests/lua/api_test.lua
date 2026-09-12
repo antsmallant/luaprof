@@ -79,6 +79,7 @@ assert(cpu_stats.state_lua > 0)
 assert(cpu_stats.state_c > 0)
 assert(cpu_stats.overrun_events >= 0)
 assert(cpu_stats.overrun_ticks >= cpu_stats.overrun_events)
+assert(type(cpu_stats.timer_failures) == "number")
 
 local stopped, stopped_error = cpu:stop()
 assert(stopped == nil)

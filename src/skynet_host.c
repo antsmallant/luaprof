@@ -53,6 +53,7 @@ typedef struct lp_skynet_target {
 	_Atomic uint64_t stale;
 	_Atomic uint64_t overrun_events;
 	_Atomic uint64_t overrun_ticks;
+	_Atomic uint64_t timer_failures;
 	_Atomic uint64_t worker_mask;
 	_Atomic bool draining_events;
 } lp_skynet_target;
@@ -471,6 +472,11 @@ lp_skynet_host_test_inject_tick_now(int overrun) {
 	info.si_value.sival_ptr = current_worker;
 	timer_signal_handler(host_signal, &info, NULL);
 }
+
+void
+lp_skynet_host_test_reset_failure(void) {
+	atomic_store_explicit(&host_failed, false, memory_order_release);
+}
 #endif
 
 static bool
@@ -508,9 +514,22 @@ discard_pending(lp_skynet_worker *worker, const sigset_t *set,
 }
 
 static void
+record_active_timer_failure(void) {
+	for (size_t i = 0; i < LP_SKYNET_TARGET_CAPACITY; ++i) {
+		lp_skynet_target *target = &targets[i];
+		if (!target_pin(target,
+			LP_SKYNET_TARGET_ALLOW(LP_SKYNET_TARGET_ACTIVE), NULL)) {
+			continue;
+		}
+		add_quality(&target->timer_failures, 1);
+		target_unpin(target);
+	}
+}
+
+static bool
 sync_worker_timer(lp_skynet_worker *worker) {
 	if (worker == NULL) {
-		return;
+		return true;
 	}
 	unsigned int count = atomic_load_explicit(&active_targets,
 		memory_order_acquire);
@@ -522,13 +541,15 @@ sync_worker_timer(lp_skynet_worker *worker) {
 			if (timer_settime(worker->timer_id, 0, &disabled, NULL) != 0) {
 				atomic_store_explicit(&host_failed, true,
 					memory_order_release);
+				record_active_timer_failure();
+				return false;
 			}
 			worker->armed_hz = 0;
 		}
-		return;
+		return true;
 	}
 	if (worker->armed_hz == hz) {
-		return;
+		return true;
 	}
 	uint64_t interval_ns = UINT64_C(1000000000) / hz;
 	struct itimerspec interval = {
@@ -540,9 +561,11 @@ sync_worker_timer(lp_skynet_worker *worker) {
 	interval.it_value = interval.it_interval;
 	if (timer_settime(worker->timer_id, 0, &interval, NULL) != 0) {
 		atomic_store_explicit(&host_failed, true, memory_order_release);
-		return;
+		record_active_timer_failure();
+		return false;
 	}
 	worker->armed_hz = hz;
+	return true;
 }
 
 static lp_skynet_target *
@@ -631,7 +654,7 @@ lp_skynet_host_worker_start(unsigned int worker_id) {
 	}
 	atomic_store_explicit(&worker->active, true, memory_order_release);
 	current_worker = worker;
-	sync_worker_timer(worker);
+	(void)sync_worker_timer(worker);
 }
 
 void
@@ -682,7 +705,7 @@ lp_skynet_host_dispatch_enter(uint32_t handle) {
 	if (blocked) {
 		discard_pending(current_worker, &set, previous_target, previous_token);
 	}
-	sync_worker_timer(current_worker);
+	(void)sync_worker_timer(current_worker);
 	lp_skynet_target *target = pin_active_handle(handle);
 	if (target == NULL) {
 		if (blocked) {
@@ -712,7 +735,7 @@ lp_skynet_host_dispatch_leave(void) {
 		if (blocked) {
 			discard_pending(current_worker, &set, target, token);
 		}
-		sync_worker_timer(current_worker);
+		(void)sync_worker_timer(current_worker);
 		if (blocked) {
 			(void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
 		}
@@ -723,6 +746,37 @@ lp_skynet_host_dispatch_leave(void) {
 static uint32_t
 api_current_handle(void) {
 	return current_worker == NULL ? 0 : current_handle;
+}
+
+static void
+rollback_target_start(lp_skynet_target *target, uint64_t token) {
+	pthread_mutex_lock(&host_lock);
+	if (target_current_state(target) == LP_SKYNET_TARGET_ACTIVE &&
+		target_token(target) == token &&
+		target_transition(target, LP_SKYNET_TARGET_ACTIVE,
+			LP_SKYNET_TARGET_RECLAIMING)) {
+		unsigned int count = atomic_load_explicit(&active_targets,
+			memory_order_relaxed);
+		if (count > 0) {
+			count--;
+		}
+		atomic_store_explicit(&active_targets, count, memory_order_release);
+		if (count == 0) {
+			atomic_store_explicit(&active_sample_hz, 0,
+				memory_order_release);
+		}
+		target_wait_unpinned(target);
+		free(target->events);
+		target->events = NULL;
+		atomic_store_explicit(&target->handle, 0, memory_order_relaxed);
+		atomic_store_explicit(&target->token, 0, memory_order_relaxed);
+		target->generation = 0;
+		target->sample_hz = 0;
+		target->main_state = NULL;
+		(void)target_transition(target, LP_SKYNET_TARGET_RECLAIMING,
+			LP_SKYNET_TARGET_FREE);
+	}
+	pthread_mutex_unlock(&host_lock);
 }
 
 static int
@@ -791,6 +845,8 @@ api_target_start(uint32_t handle, lua_State *main_state,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->overrun_ticks, 0,
 		memory_order_relaxed);
+	atomic_store_explicit(&selected->timer_failures, 0,
+		memory_order_relaxed);
 	atomic_store_explicit(&selected->worker_mask, 0,
 		memory_order_relaxed);
 	atomic_store_explicit(&selected->draining_events, false,
@@ -819,7 +875,13 @@ api_target_start(uint32_t handle, lua_State *main_state,
 	if (blocked) {
 		discard_pending(current_worker, &set, previous_target, previous_token);
 	}
-	sync_worker_timer(current_worker);
+	if (!sync_worker_timer(current_worker)) {
+		rollback_target_start(selected, selected_token);
+		if (blocked) {
+			(void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
+		}
+		return -1;
+	}
 	publish_slot(current_worker, selected, selected_token, main_state, 0,
 		NULL);
 	if (blocked) {
@@ -874,7 +936,9 @@ api_target_quiesce(uint64_t token) {
 			discard_pending(current_worker, &set, target, token);
 		}
 	}
-	sync_worker_timer(current_worker);
+	if (!sync_worker_timer(current_worker)) {
+		add_quality(&target->timer_failures, 1);
+	}
 	if (blocked) {
 		(void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
 	}
@@ -995,6 +1059,8 @@ api_take_quality(uint64_t token, lp_skynet_quality *quality) {
 		&target->overrun_events, 0, memory_order_relaxed);
 	quality->overrun_ticks = atomic_exchange_explicit(
 		&target->overrun_ticks, 0, memory_order_relaxed);
+	quality->timer_failures = atomic_exchange_explicit(
+		&target->timer_failures, 0, memory_order_relaxed);
 	quality->worker_mask = atomic_load_explicit(&target->worker_mask,
 		memory_order_relaxed);
 	target_unpin(target);

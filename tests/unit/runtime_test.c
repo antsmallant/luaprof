@@ -130,6 +130,7 @@ main(void) {
 	lp_runtime_cpu_sample(runtime, cpu_generation, LP_VM_C,
 		sampled_cfunction, frames, 2, false);
 	lp_runtime_cpu_quality(runtime, cpu_generation, 4, 1, 2, 3, 7);
+	lp_runtime_cpu_scheduler_quality(runtime, cpu_generation, 5, 6, 2);
 	lp_runtime_allocation(runtime, memory_generation, state_identity,
 		NULL, &host, 0, 64, true);
 	uint64_t weighted_space = 0;
@@ -220,6 +221,9 @@ main(void) {
 	assert(result.stats.dropped_events == 4);
 	assert(result.stats.unstable_events == 1);
 	assert(result.stats.profiler_overhead_events == 2);
+	assert(result.stats.stale_events == 5);
+	assert(result.stats.timer_failures == 6);
+	assert(result.stats.scheduler_workers == 2);
 	assert(lp_result_cpu_sample_count(&result) == 1);
 	lp_cpu_sample_view sample;
 	assert(lp_result_cpu_sample(&result, 0, &sample));

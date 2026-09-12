@@ -381,6 +381,9 @@ result_stats(lua_State *L) {
 			(lua_Integer)result->value.stats.stale_events);
 		lua_setfield(L, -2, "stale_events");
 		lua_pushinteger(L,
+			(lua_Integer)result->value.stats.timer_failures);
+		lua_setfield(L, -2, "timer_failures");
+		lua_pushinteger(L,
 			(lua_Integer)result->value.stats.scheduler_workers);
 		lua_setfield(L, -2, "scheduler_workers");
 		lua_pushinteger(L,

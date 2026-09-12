@@ -151,13 +151,17 @@ native profiler。GC 和 host 状态使用 synthetic frame。
   Lua profiler API 的启动、停止、统计和导出等管理工作期间到达、因而不归入业务栈的
   实际 delivery 数。保护区支持嵌套，并在 Lua error/OOM 展开 C 调用栈时自动退出。
 - `stale_events`：Skynet generation 或迁移边界拒绝的实际 delivery 数。
+- `timer_failures`：Skynet worker timer 的 arm/disarm 系统调用失败次数。非零表示采样源曾
+  不可用，profile 可能存在缺口；首次 target 启动的 arm 失败会直接令启动失败，不产生
+  result。
 - `scheduler_workers`：Skynet target 实际使用过的 worker 数。
 - `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：有界存储的质量计数器。
 
 函数与 VM 状态占比使用“该函数或状态的有效样本数 / `samples`”。timer overrun
 对应时刻没有可用执行上下文，不会补权到 signal 实际送达时的栈；`samples/count` 与
 `cpu/nanoseconds` 都只由有效样本计算。判断 CPU profile 是否健康时，应比较 `samples`、
-持续时间和配置频率，检查 `overrun_ticks` 及各类 drop/overflow 是否可以忽略。overrun
+持续时间和配置频率，检查 `timer_failures`、`overrun_ticks` 及各类 drop/overflow 是否可以
+忽略。overrun
 显著或 profile 过短时，结果不足以支撑精确占比结论。
 
 ## 3. 内存采样模型

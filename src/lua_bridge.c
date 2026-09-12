@@ -102,7 +102,7 @@ drain_scheduler(lp_lua_bridge *bridge) {
 		quality.dropped, quality.unstable, quality.profiler_overhead,
 		quality.overrun_events, quality.overrun_ticks);
 	lp_runtime_cpu_scheduler_quality(bridge->runtime,
-		bridge->cpu_generation, quality.stale,
+		bridge->cpu_generation, quality.stale, quality.timer_failures,
 		worker_count(quality.worker_mask));
 }
 

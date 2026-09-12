@@ -10,8 +10,9 @@
 
 ```text
 baseline: f19d160
-target:   5606145
+target:   a9fa15a
 bridge:   LUA_PROFILE_ABI_VERSION == 2
+host:     LP_SKYNET_HOST_ABI_VERSION == 3
 module:   customized Lua 5.5, LUAPROF_EXPECT_LUA_VERSION == 505
 ```
 

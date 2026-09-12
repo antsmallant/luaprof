@@ -7,7 +7,7 @@
 typedef struct lua_State lua_State;
 typedef int (*lp_skynet_lua_cfunction)(lua_State *L);
 
-#define LP_SKYNET_HOST_ABI_VERSION 2u
+#define LP_SKYNET_HOST_ABI_VERSION 3u
 
 typedef struct lp_skynet_tick_event {
 	lua_State *state;
@@ -22,6 +22,7 @@ typedef struct lp_skynet_quality {
 	uint64_t stale;
 	uint64_t overrun_events;
 	uint64_t overrun_ticks;
+	uint64_t timer_failures;
 	uint64_t worker_mask;
 } lp_skynet_quality;
 

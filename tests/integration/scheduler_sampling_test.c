@@ -6,6 +6,7 @@
 #include "skynet_host_test.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
@@ -14,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <lauxlib.h>
 #include <lua.h>
@@ -23,6 +25,8 @@
 #define OTHER_HANDLE UINT32_C(0x200)
 #define TRANSITION_HANDLE UINT32_C(0x500)
 #define REUSE_HANDLE UINT32_C(0x600)
+#define TIMER_FAILURE_HANDLE UINT32_C(0x700)
+#define FIRST_ARM_FAILURE_HANDLE UINT32_C(0x800)
 #define REUSE_ROUNDS 1000u
 
 typedef struct scheduler_test {
@@ -46,6 +50,24 @@ typedef struct reuse_test {
 } reuse_test;
 
 static bool inject_memory_tick;
+static _Atomic bool fail_next_timer_arm;
+
+int __real_timer_settime(timer_t timer_id, int flags,
+	const struct itimerspec *new_value, struct itimerspec *old_value);
+
+int
+__wrap_timer_settime(timer_t timer_id, int flags,
+	const struct itimerspec *new_value, struct itimerspec *old_value) {
+	bool arming = new_value != NULL &&
+		(new_value->it_value.tv_sec != 0 ||
+			new_value->it_value.tv_nsec != 0);
+	if (arming && atomic_exchange_explicit(&fail_next_timer_arm, false,
+		memory_order_acq_rel)) {
+		errno = EIO;
+		return -1;
+	}
+	return __real_timer_settime(timer_id, flags, new_value, old_value);
+}
 
 void __real_lp_runtime_memory_sample(lp_runtime *runtime,
 	uint64_t generation, void *allocation_pointer,
@@ -290,6 +312,7 @@ transition_tick_worker(void *argument) {
 	assert(zero_quality.dropped == 0);
 	assert(zero_quality.profiler_overhead == 0);
 	assert(zero_quality.stale == 0);
+	assert(zero_quality.timer_failures == 0);
 	lp_skynet_host_test_inject_transition_tick(3);
 	lp_skynet_host_dispatch_leave();
 	lp_skynet_host_dispatch_enter(TRANSITION_HANDLE);
@@ -459,6 +482,92 @@ test_target_reuse_with_concurrent_dispatch(void) {
 	close_test(&test.target);
 }
 
+static void *
+timer_failure_owner_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(10);
+	lp_skynet_host_dispatch_enter(TIMER_FAILURE_HANDLE);
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1000 },
+	};
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void *
+timer_failure_migration_worker(void *argument) {
+	scheduler_test *test = argument;
+	atomic_store_explicit(&fail_next_timer_arm, true, memory_order_release);
+	lp_skynet_host_worker_start(11);
+	assert(!atomic_load_explicit(&fail_next_timer_arm, memory_order_acquire));
+	lp_skynet_host_dispatch_enter(TIMER_FAILURE_HANDLE);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_running_timer_failure_is_reported(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, timer_failure_owner_worker,
+		&test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(pthread_create(&thread, NULL, timer_failure_migration_worker,
+		&test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(test.result.stats.timer_failures == 1);
+	lp_skynet_host_test_reset_failure();
+	close_test(&test);
+}
+
+static void *
+first_arm_failure_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(12);
+	lp_skynet_host_dispatch_enter(FIRST_ARM_FAILURE_HANDLE);
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1000 },
+	};
+	atomic_store_explicit(&fail_next_timer_arm, true, memory_order_release);
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_ERR_HOST);
+	assert(!atomic_load_explicit(&fail_next_timer_arm, memory_order_acquire));
+	assert(test->generation == 0);
+	assert(test->bridge.scheduler_token == 0);
+	assert(!test->bridge.cpu_active);
+
+	/* The test-only reset proves the failed target/count were rolled back. */
+	lp_skynet_host_test_reset_failure();
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_OK);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	assert(test->result.stats.timer_failures == 0);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_first_arm_failure_rolls_back_start(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, first_arm_failure_worker,
+		&test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	close_test(&test);
+}
+
 int
 main(void) {
 	test_migration();
@@ -468,6 +577,8 @@ main(void) {
 	test_memory_callback_is_profiler_overhead();
 	test_module_work_is_profiler_overhead();
 	test_target_reuse_with_concurrent_dispatch();
+	test_running_timer_failure_is_reported();
+	test_first_arm_failure_rolls_back_start();
 	puts("luaprof scheduler CPU sampling: ok");
 	return EXIT_SUCCESS;
 }

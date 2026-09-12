@@ -343,7 +343,7 @@ lp_runtime_cpu_quality(lp_runtime *runtime, uint64_t generation,
 
 void
 lp_runtime_cpu_scheduler_quality(lp_runtime *runtime, uint64_t generation,
-	uint64_t stale, uint64_t workers) {
+	uint64_t stale, uint64_t timer_failures, uint64_t workers) {
 	if (runtime == NULL) {
 		return;
 	}
@@ -353,6 +353,8 @@ lp_runtime_cpu_scheduler_quality(lp_runtime *runtime, uint64_t generation,
 	}
 	slot->stats.stale_events = saturating_add(slot->stats.stale_events,
 		stale);
+	slot->stats.timer_failures = saturating_add(slot->stats.timer_failures,
+		timer_failures);
 	if (workers > slot->stats.scheduler_workers) {
 		slot->stats.scheduler_workers = workers;
 	}

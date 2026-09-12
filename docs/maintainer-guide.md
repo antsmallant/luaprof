@@ -36,7 +36,7 @@ Skynet Lua 定义 `505`。即使版本号相同，不同源码树仍不能互换
 当前 ABI contract：
 
 - Lua VM bridge：`LUA_PROFILE_ABI_VERSION == 2`
-- Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 2`
+- Skynet host API：`LP_SKYNET_HOST_ABI_VERSION == 3`
 
 `include/luaprof/runtime.h` 是 module 内部组件和仓库测试共享的源码接口，不是受支持的外部
 C API，也不承诺跨版本 source/ABI 兼容。依赖它的 object 必须从同一个 checkout 整体重编译；

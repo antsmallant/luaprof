@@ -459,7 +459,7 @@ $(LUA55_MEMORY_SAMPLING_TEST): tests/integration/memory_sampling_test.c $(RUNTIM
 $(SCHEDULER_SAMPLING_TEST): tests/integration/scheduler_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(SKYNET_HOST_TEST_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) -Wl,-E \
-		-Wl,--wrap=lp_runtime_memory_sample $^ \
+		-Wl,--wrap=lp_runtime_memory_sample -Wl,--wrap=timer_settime $^ \
 		$(LDLIBS) -lm -ldl -pthread -lrt -o $@
 
 $(LUA_API_PROFILER_WORK_TEST): tests/integration/lua_api_profiler_work_test.c src/thread_timer_test.h $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_TEST_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_SYMBOLS_OBJECT) $(NATIVE_SYMBOL_OBJECT) $(PPROF_EXPORTER_OBJECT) $(LUA_MODULE_TEST_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
