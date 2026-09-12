@@ -3,6 +3,13 @@
 
 #include "luaprof/skynet_host.h"
 
-const lp_skynet_host_api *lp_skynet_backend_api(void);
+typedef enum lp_skynet_backend_status {
+	LP_SKYNET_BACKEND_ABSENT = 0,
+	LP_SKYNET_BACKEND_COMPATIBLE,
+	LP_SKYNET_BACKEND_INCOMPATIBLE,
+} lp_skynet_backend_status;
+
+lp_skynet_backend_status lp_skynet_backend_resolve(
+	const lp_skynet_host_api **api);
 
 #endif

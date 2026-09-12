@@ -258,7 +258,9 @@ make linux LUAPROF=1 \
 
 `luaprof.so` 通过 `dlsym(RTLD_DEFAULT, "lp_skynet_host_get_api")` 自动发现这个 host
 backend。缺少 host library 时，module 会退回 thread-per-VM backend；这对会迁移的
-Skynet service 是无效配置，不能投入使用。
+Skynet service 是无效配置，不能投入使用。若发现 host symbol、但 host 拒绝当前 ABI
+版本，CPU recorder 会返回 host error，不会静默退回 thread backend。升级时必须整体
+重编译并替换 Skynet host 与 module。
 
 ### 5.3 增加 scheduler hook
 
@@ -372,7 +374,7 @@ go tool pprof -sample_index=inuse_space -top heap.pb.gz
 | `undefined symbol: lua_profile_*` | 宿主 Lua 没有 bridge，或者静态 Lua 符号未用 `-Wl,-E` 导出 |
 | 编译时 `unexpected Lua ABI` | module 使用了错误版本的 Lua 头文件或错误的 `LUAPROF_EXPECT_LUA_VERSION` |
 | Skynet CPU profile 的 `scheduler_workers == 0` | host library/hook 未生效，module 错误退回 thread backend |
-| Skynet `cpu.start` 返回 host error | 不在 service dispatch 内、当前 handle 为零、worker 未注册、`SIGRTMAX - 3` 被屏蔽，或并发 recorder 的 `sample_hz` 不一致 |
+| Skynet `cpu.start` 返回 host error | host/module ABI 不兼容、不在 service dispatch 内、当前 handle 为零、worker 未注册、`SIGRTMAX - 3` 被屏蔽，或并发 recorder 的 `sample_hz` 不一致 |
 | profile 只有地址形式的 CFunction | 可执行文件被 strip、符号未导出，或 Lua 可见绑定扫描不到该函数；不影响 Lua caller stack |
 | memory `inuse_*` 始终为零 | 没有设置 `track_free = true` |
 | 启动 timer 返回 host error | 实时信号已被占用、当前线程已有 recorder，或超过固定 timer/worker 上限 |

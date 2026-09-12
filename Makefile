@@ -73,6 +73,7 @@ CPU_SAMPLING_TEST := $(BUILD_DIR)/cpu-sampling-test
 COMBINED_SAMPLING_TEST := $(BUILD_DIR)/combined-sampling-test
 SCHEDULER_SAMPLING_TEST := $(BUILD_DIR)/scheduler-sampling-test
 SKYNET_SIGNAL_MASK_TEST := $(BUILD_DIR)/skynet-signal-mask-test
+SKYNET_ABI_MISMATCH_TEST := $(BUILD_DIR)/skynet-abi-mismatch-test
 CPU_CORE_TEST := $(BUILD_DIR)/cpu-core-test
 MEMORY_CORE_TEST := $(BUILD_DIR)/memory-core-test
 MEMORY_SAMPLING_TEST := $(BUILD_DIR)/memory-sampling-test
@@ -454,6 +455,11 @@ $(SKYNET_SIGNAL_MASK_TEST): tests/integration/skynet_signal_mask_test.c $(RUNTIM
 		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) -Wl,-E $^ \
 		$(LDLIBS) -lm -ldl -pthread -lrt -o $@
 
+$(SKYNET_ABI_MISMATCH_TEST): tests/integration/skynet_abi_mismatch_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) -Wl,-E $^ \
+		$(LDLIBS) -lm -ldl -pthread -lrt -o $@
+
 $(LUA_LIB): lua
 
 thread-vm: $(BUILD_DIR)/thread-vm-smoke
@@ -575,9 +581,10 @@ test-lua46-memory-sampling: $(LUA46_MEMORY_SAMPLING_TEST)
 test-lua55-memory-sampling: $(LUA55_MEMORY_SAMPLING_TEST)
 	$(LUA55_MEMORY_SAMPLING_TEST)
 
-test-scheduler-sampling: $(SCHEDULER_SAMPLING_TEST) $(SKYNET_SIGNAL_MASK_TEST)
+test-scheduler-sampling: $(SCHEDULER_SAMPLING_TEST) $(SKYNET_SIGNAL_MASK_TEST) $(SKYNET_ABI_MISMATCH_TEST)
 	$(SCHEDULER_SAMPLING_TEST)
 	$(SKYNET_SIGNAL_MASK_TEST)
+	$(SKYNET_ABI_MISMATCH_TEST)
 
 bench-disabled: $(DISABLED_BENCH)
 	$(DISABLED_BENCH)

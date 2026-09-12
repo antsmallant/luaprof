@@ -13,6 +13,7 @@ typedef struct lp_lua_bridge {
 	uint64_t memory_generation;
 	bool cpu_active;
 	bool memory_active;
+	bool scheduler_incompatible;
 } lp_lua_bridge;
 
 void lp_lua_bridge_init(lp_lua_bridge *bridge, lua_State *main_state);

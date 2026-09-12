@@ -231,6 +231,9 @@ start_collector(void *userdata, lp_runtime *runtime,
 	lp_lua_bridge *bridge = userdata;
 	(void)runtime;
 	if (config->kind == LP_COLLECTOR_CPU) {
+		if (bridge->scheduler_incompatible) {
+			return LP_ERR_HOST;
+		}
 		if (bridge->scheduler_api != NULL) {
 			uint32_t handle = bridge->scheduler_api->current_handle();
 			uint64_t token = 0;
@@ -313,7 +316,10 @@ void
 lp_lua_bridge_init(lp_lua_bridge *bridge, lua_State *main_state) {
 	memset(bridge, 0, sizeof(*bridge));
 	bridge->main_state = main_state;
-	bridge->scheduler_api = lp_skynet_backend_api();
+	lp_skynet_backend_status status =
+		lp_skynet_backend_resolve(&bridge->scheduler_api);
+	bridge->scheduler_incompatible =
+		status == LP_SKYNET_BACKEND_INCOMPATIBLE;
 }
 
 void
