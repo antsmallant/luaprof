@@ -5,6 +5,31 @@ assert(type(profile.cpu.start) == "function")
 assert(type(profile.memory.start) == "function")
 assert(profile.start == nil)
 
+local empty_memory = assert(profile.memory.start {
+    sample_bytes = 1,
+    track_free = true,
+})
+local empty_memory_result = assert(empty_memory:stop())
+empty_memory = nil
+collectgarbage "collect"
+local empty_memory_stats = empty_memory_result:stats()
+assert(empty_memory_stats.allocation_events == 0)
+assert(empty_memory_stats.reallocation_events == 0)
+assert(empty_memory_stats.free_events == 0)
+assert(empty_memory_stats.samples == 0)
+assert(empty_memory_stats.alloc_space == 0)
+assert(empty_memory_stats.alloc_objects == 0)
+assert(empty_memory_stats.inuse_space == 0)
+assert(empty_memory_stats.inuse_objects == 0)
+
+do
+    local abandoned_memory <close> = assert(profile.memory.start {
+        sample_bytes = 1,
+        track_free = true,
+    })
+end
+assert(profile.memory.start():stop())
+
 local cpu = assert(profile.cpu.start { sample_hz = 200 })
 local duplicate, duplicate_error = profile.cpu.start()
 assert(duplicate == nil)

@@ -45,6 +45,10 @@ assert(memory_result:write("heap.pb.gz"))
 独立运行和停止。recorder 的 `__gc` 和 `__close` 会停止并丢弃仍在活动的 recording；
 需要结果时应显式调用 `stop()`。
 
+Lua module 在 collector 启动前预留 stop 所需的 result userdata，因此创建返回对象不会被
+当前 memory recording 计为 allocation 或 sampled live object。空 workload 在
+`sample_bytes = 1`、`track_free = true` 下仍保持零 alloc-space 和零 in-use。
+
 停止后的 result 持有冻结的 profile：
 
 - `result:stats()`：返回计数器和质量元数据。

@@ -166,7 +166,7 @@ memory_config(lua_State *L) {
 static int
 start_recorder(lua_State *L, lp_collector_config config) {
 	lp_runtime_holder *holder = runtime_holder(L);
-	lp_lua_recorder *recorder = lua_newuserdatauv(L, sizeof(*recorder), 1);
+	lp_lua_recorder *recorder = lua_newuserdatauv(L, sizeof(*recorder), 2);
 	recorder->runtime = holder->runtime;
 	recorder->kind = config.kind;
 	recorder->generation = 0;
@@ -174,6 +174,10 @@ start_recorder(lua_State *L, lp_collector_config config) {
 	luaL_setmetatable(L, LP_RECORDER_METATABLE);
 	lua_pushvalue(L, -2);
 	lua_setiuservalue(L, -2, 1);
+	lp_lua_result *result = lua_newuserdatauv(L, sizeof(*result), 0);
+	memset(result, 0, sizeof(*result));
+	luaL_setmetatable(L, LP_RESULT_METATABLE);
+	lua_setiuservalue(L, -2, 2);
 
 	lp_status status = lp_runtime_start(holder->runtime, L, &config,
 		&recorder->generation);
@@ -207,8 +211,8 @@ recorder_stop(lua_State *L) {
 		return 2;
 	}
 
-	lp_lua_result *result = lua_newuserdatauv(L, sizeof(*result), 0);
-	memset(result, 0, sizeof(*result));
+	lua_getiuservalue(L, 1, 2);
+	lp_lua_result *result = luaL_checkudata(L, -1, LP_RESULT_METATABLE);
 	lp_status status = lp_runtime_stop(recorder->runtime, L, recorder->kind,
 		recorder->generation, &result->value);
 	if (status != LP_OK) {
@@ -219,7 +223,8 @@ recorder_stop(lua_State *L) {
 		return 2;
 	}
 	recorder->active = false;
-	luaL_setmetatable(L, LP_RESULT_METATABLE);
+	lua_pushnil(L);
+	lua_setiuservalue(L, 1, 2);
 	return 1;
 }
 
