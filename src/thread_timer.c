@@ -165,6 +165,26 @@ lp_thread_timer_test_inject_tick(lp_thread_timer *timer, int overrun) {
 	info.si_value.sival_ptr = timer;
 	timer_signal_handler(timer_signal, &info, NULL);
 }
+
+bool
+lp_thread_timer_test_set_frequency(lp_thread_timer *timer,
+	uint32_t sample_hz) {
+	if (timer == NULL || !timer->timer_created || sample_hz == 0) {
+		return false;
+	}
+	uint64_t interval_ns = UINT64_C(1000000000) / sample_hz;
+	struct itimerspec spec = {
+		.it_interval = {
+			.tv_sec = (time_t)(interval_ns / UINT64_C(1000000000)),
+			.tv_nsec = (long)(interval_ns % UINT64_C(1000000000)),
+		},
+		.it_value = {
+			.tv_sec = (time_t)(interval_ns / UINT64_C(1000000000)),
+			.tv_nsec = (long)(interval_ns % UINT64_C(1000000000)),
+		},
+	};
+	return timer_settime(timer->timer_id, 0, &spec, NULL) == 0;
+}
 #endif
 
 static lp_status
@@ -357,10 +377,20 @@ lp_thread_timer_disarm(lp_thread_timer *timer) {
 	(void)pthread_sigmask(SIG_BLOCK, &set, &previous);
 	atomic_store_explicit(&timer->active, false, memory_order_release);
 	if (timer->timer_created) {
+		/* Disarming can clear the overrun carried by an already queued signal. */
+		struct timespec no_wait = { 0, 0 };
+		siginfo_t info;
+		int received = sigtimedwait(&set, &info, &no_wait);
+		if (received == signal_number && info.si_code == SI_TIMER &&
+			info.si_value.sival_ptr == timer) {
+			record_overrun(timer, &info);
+			add_quality(&timer->dropped, 1);
+		}
 		struct itimerspec disabled = { 0 };
-		(void)timer_settime(timer->timer_id, 0, &disabled, NULL);
-		(void)timer_delete(timer->timer_id);
-		timer->timer_created = false;
+		if (timer_settime(timer->timer_id, 0, &disabled, NULL) != 0) {
+			(void)timer_delete(timer->timer_id);
+			timer->timer_created = false;
+		}
 	}
 	for (;;) {
 		struct timespec no_wait = { 0, 0 };
@@ -373,6 +403,10 @@ lp_thread_timer_disarm(lp_thread_timer *timer) {
 			record_overrun(timer, &info);
 			add_quality(&timer->dropped, 1);
 		}
+	}
+	if (timer->timer_created) {
+		(void)timer_delete(timer->timer_id);
+		timer->timer_created = false;
 	}
 	if (active_thread_timer == timer) {
 		active_thread_timer = NULL;

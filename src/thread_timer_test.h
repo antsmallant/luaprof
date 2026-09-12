@@ -5,5 +5,7 @@
 
 /* Available only when thread_timer.c is compiled with LUAPROF_TESTING. */
 void lp_thread_timer_test_inject_tick(lp_thread_timer *timer, int overrun);
+bool lp_thread_timer_test_set_frequency(lp_thread_timer *timer,
+	uint32_t sample_hz);
 
 #endif

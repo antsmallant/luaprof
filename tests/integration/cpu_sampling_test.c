@@ -367,6 +367,31 @@ test_timer_overrun_quality(void) {
 
 #if defined(LUAPROF_TESTING)
 static void
+test_stop_pending_overrun_quality(void) {
+	test_vm vm;
+	vm_open(&vm);
+	uint64_t generation = start_cpu(&vm, 1);
+	sigset_t set;
+	sigset_t previous;
+	sigemptyset(&set);
+	sigaddset(&set, SIGRTMAX - 2);
+	assert(pthread_sigmask(SIG_BLOCK, &set, &previous) == 0);
+	assert(lp_thread_timer_test_set_frequency(vm.bridge.cpu_timer, 1000));
+	busy_for(UINT64_C(30000000));
+	sigset_t pending;
+	assert(sigpending(&pending) == 0);
+	assert(sigismember(&pending, SIGRTMAX - 2) == 1);
+	lp_result result = stop_cpu(&vm, generation);
+	assert(pthread_sigmask(SIG_SETMASK, &previous, NULL) == 0);
+	assert(result.stats.samples == 0);
+	assert(result.stats.dropped_events >= 1);
+	assert(result.stats.overrun_events >= 1);
+	assert(result.stats.overrun_ticks >= 1);
+	lp_result_dispose(&result);
+	vm_close(&vm);
+}
+
+static void
 test_exact_timer_overrun_accounting(void) {
 	test_vm vm;
 	vm_open(&vm);
@@ -502,6 +527,7 @@ main(void) {
 	test_multiple_threads();
 	test_timer_overrun_quality();
 #if defined(LUAPROF_TESTING)
+	test_stop_pending_overrun_quality();
 	test_exact_timer_overrun_accounting();
 	test_coroutine_event_lifetime();
 #endif
