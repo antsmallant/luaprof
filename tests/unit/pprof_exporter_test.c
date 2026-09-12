@@ -1,13 +1,20 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "luaprof/runtime.h"
 #include "native_symbol.h"
 #include "pprof_exporter.h"
 
 #include <assert.h>
 #include <stdbool.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <zlib.h>
 
@@ -441,6 +448,53 @@ read_text(const char *path) {
 	return text;
 }
 
+static void
+write_text(const char *path, const char *text) {
+	FILE *file = fopen(path, "wb");
+	assert(file != NULL);
+	assert(fwrite(text, 1, strlen(text), file) == strlen(text));
+	assert(fclose(file) == 0);
+}
+
+static void
+assert_text(const char *path, const char *expected) {
+	char *actual = read_text(path);
+	assert(strcmp(actual, expected) == 0);
+	free(actual);
+}
+
+static void
+assert_mode(const char *path, mode_t expected) {
+	struct stat status;
+	assert(stat(path, &status) == 0);
+	assert((status.st_mode & 0777) == expected);
+}
+
+static void
+assert_failed_export_preserves(const lp_result *result, const char *path,
+	lp_export_format format) {
+	const char sentinel[] = "existing-profile\n";
+	write_text(path, sentinel);
+	pid_t child = fork();
+	assert(child >= 0);
+	if (child == 0) {
+		struct sigaction ignore = { 0 };
+		ignore.sa_handler = SIG_IGN;
+		assert(sigemptyset(&ignore.sa_mask) == 0);
+		assert(sigaction(SIGXFSZ, &ignore, NULL) == 0);
+		struct rlimit limit = { 0, 0 };
+		assert(setrlimit(RLIMIT_FSIZE, &limit) == 0);
+		char error[256];
+		bool success = lp_export_result(result, path, format, NULL, error,
+			sizeof(error));
+		_exit(!success && error[0] != '\0' ? EXIT_SUCCESS : EXIT_FAILURE);
+	}
+	int status;
+	assert(waitpid(child, &status, 0) == child);
+	assert(WIFEXITED(status) && WEXITSTATUS(status) == EXIT_SUCCESS);
+	assert_text(path, sentinel);
+}
+
 static lp_result
 cpu_result(void) {
 	lp_runtime *runtime = lp_runtime_new(NULL, NULL, NULL);
@@ -607,6 +661,10 @@ main(void) {
 	const char *cpu_folded = "/tmp/luaprof-pprof-cpu.folded";
 	const char *memory_path = "/tmp/luaprof-pprof-memory.pb.gz";
 	const char *memory_folded = "/tmp/luaprof-pprof-memory.folded";
+	(void)unlink(cpu_path);
+	(void)unlink(cpu_folded);
+	(void)unlink(memory_path);
+	(void)unlink(memory_folded);
 	char error[256];
 	lp_native_symbol native;
 	memset(&native, 0xff, sizeof(native));
@@ -617,13 +675,17 @@ main(void) {
 	assert(!lp_native_symbol_resolve(NULL, NULL));
 
 	lp_result cpu = cpu_result();
+	write_text(cpu_path, "old-profile\n");
+	assert(chmod(cpu_path, 0640) == 0);
 	assert(lp_export_result(&cpu, cpu_path, LP_EXPORT_PPROF, NULL, error,
 		sizeof(error)));
+	assert_mode(cpu_path, 0640);
 	lp_export_symbols symbols = {
 		.cfunction_name = cfunction_name,
 	};
 	assert(lp_export_result_with_symbols(&cpu, cpu_folded, LP_EXPORT_FOLDED,
 		"samples", &symbols, error, sizeof(error)));
+	assert_mode(cpu_folded, 0600);
 	size_t size;
 	unsigned char *data = read_gzip(cpu_path, &size);
 	profile_summary summary;
@@ -652,6 +714,47 @@ main(void) {
 		"recursive_root;visible.profiled [profiled_cfunction];recursive_caller;"
 		"visible.profiled [profiled_cfunction] 1\n") != NULL);
 	free(folded);
+
+	char failure_directory[] = "/tmp/luaprof-export-failure-XXXXXX";
+	assert(mkdtemp(failure_directory) != NULL);
+	char failed_pprof[256];
+	char failed_folded[256];
+	assert(snprintf(failed_pprof, sizeof(failed_pprof), "%s/profile.pb.gz",
+		failure_directory) > 0);
+	assert(snprintf(failed_folded, sizeof(failed_folded), "%s/profile.folded",
+		failure_directory) > 0);
+	assert_failed_export_preserves(&cpu, failed_pprof, LP_EXPORT_PPROF);
+	assert_failed_export_preserves(&cpu, failed_folded, LP_EXPORT_FOLDED);
+	assert(unlink(failed_pprof) == 0);
+	assert(unlink(failed_folded) == 0);
+	assert(rmdir(failure_directory) == 0);
+
+	char symlink_directory[] = "/tmp/luaprof-export-symlink-XXXXXX";
+	assert(mkdtemp(symlink_directory) != NULL);
+	char symlink_target[256];
+	char symlink_output[256];
+	assert(snprintf(symlink_target, sizeof(symlink_target), "%s/target",
+		symlink_directory) > 0);
+	assert(snprintf(symlink_output, sizeof(symlink_output), "%s/output",
+		symlink_directory) > 0);
+	write_text(symlink_target, "symlink-target\n");
+	assert(symlink(symlink_target, symlink_output) == 0);
+	assert(lp_export_result(&cpu, symlink_output, LP_EXPORT_FOLDED, "samples",
+		error, sizeof(error)));
+	struct stat link_status;
+	assert(lstat(symlink_output, &link_status) == 0);
+	assert(S_ISREG(link_status.st_mode));
+	assert_mode(symlink_output, 0600);
+	assert_text(symlink_target, "symlink-target\n");
+	assert(unlink(symlink_output) == 0);
+	assert(unlink(symlink_target) == 0);
+	assert(mkfifo(symlink_output, 0600) == 0);
+	assert(!lp_export_result(&cpu, symlink_output, LP_EXPORT_FOLDED,
+		"samples", error, sizeof(error)));
+	assert(lstat(symlink_output, &link_status) == 0);
+	assert(S_ISFIFO(link_status.st_mode));
+	assert(unlink(symlink_output) == 0);
+	assert(rmdir(symlink_directory) == 0);
 	lp_result_dispose(&cpu);
 
 	lp_result memory = memory_result();

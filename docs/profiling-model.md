@@ -248,6 +248,12 @@ Memory profile 包含：
 默认 sample 对 CPU 是 `cpu`；memory 关闭 free tracking 时是 `alloc_space`，启用时是
 `inuse_space`。
 
+两种格式都先写入目标目录内的唯一临时文件；只有完整写入并成功关闭后才用原子 rename
+替换目标。写入、close 或 rename 失败时，已有目标保持不变，临时文件会被删除。替换已有
+普通文件时保留其 permission bits；创建新文件时使用 `0600`。若目标路径是 symlink，替换
+的是 symlink 目录项，link target 不会被修改，新文件使用 `0600`；其他已有的非普通文件
+会被拒绝。rename 保证进程可见的旧/新文件切换是原子的，但不承诺断电后的持久化。
+
 常用命令：
 
 ```sh

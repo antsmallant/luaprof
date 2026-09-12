@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "pprof_exporter.h"
 #include "native_symbol.h"
 
@@ -8,12 +10,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <zlib.h>
 
 #define LP_EXPORT_STACK_DEPTH 65u
 #define LP_EXPORT_FUNCTION_HASH_CAPACITY 16384u
 #define LP_EXPORT_LOCATION_HASH_CAPACITY 262144u
+#define LP_EXPORT_TEMP_NAME ".luaprof-tmp-XXXXXX"
 
 typedef struct lp_buffer {
 	unsigned char *data;
@@ -121,6 +126,92 @@ set_error(char *error, size_t capacity, const char *format, ...) {
 	va_start(arguments, format);
 	(void)vsnprintf(error, capacity, format, arguments);
 	va_end(arguments);
+}
+
+static bool
+open_temporary_file(const char *path, char **temporary_path, int *descriptor,
+	char *error, size_t error_capacity) {
+	const char *slash = strrchr(path, '/');
+	size_t directory_length = slash == NULL ? 0 : (size_t)(slash - path) + 1u;
+	size_t suffix_length = sizeof(LP_EXPORT_TEMP_NAME);
+	if (directory_length > SIZE_MAX - suffix_length) {
+		set_error(error, error_capacity, "export path is too long");
+		return false;
+	}
+	char *candidate = malloc(directory_length + suffix_length);
+	if (candidate == NULL) {
+		set_error(error, error_capacity,
+			"out of memory while creating export file");
+		return false;
+	}
+	memcpy(candidate, path, directory_length);
+	memcpy(candidate + directory_length, LP_EXPORT_TEMP_NAME, suffix_length);
+	int fd = mkstemp(candidate);
+	if (fd < 0) {
+		int saved_errno = errno;
+		set_error(error, error_capacity, "cannot create temporary file for '%s': %s",
+			path, strerror(saved_errno));
+		free(candidate);
+		return false;
+	}
+
+	struct stat existing;
+	if (lstat(path, &existing) == 0) {
+		if (!S_ISREG(existing.st_mode) && !S_ISLNK(existing.st_mode)) {
+			(void)close(fd);
+			(void)unlink(candidate);
+			set_error(error, error_capacity,
+				"cannot replace '%s': destination is not a regular file or symlink",
+				path);
+			free(candidate);
+			return false;
+		}
+		if (S_ISREG(existing.st_mode) &&
+			fchmod(fd, existing.st_mode & 0777) != 0) {
+			int saved_errno = errno;
+			(void)close(fd);
+			(void)unlink(candidate);
+			set_error(error, error_capacity,
+				"cannot preserve permissions for '%s': %s", path,
+				strerror(saved_errno));
+			free(candidate);
+			return false;
+		}
+	}
+	else if (errno != ENOENT) {
+		int saved_errno = errno;
+		(void)close(fd);
+		(void)unlink(candidate);
+		set_error(error, error_capacity, "cannot inspect '%s': %s", path,
+			strerror(saved_errno));
+		free(candidate);
+		return false;
+	}
+	*temporary_path = candidate;
+	*descriptor = fd;
+	return true;
+}
+
+static void
+discard_temporary_file(char *temporary_path) {
+	if (temporary_path != NULL) {
+		(void)unlink(temporary_path);
+		free(temporary_path);
+	}
+}
+
+static bool
+commit_temporary_file(char *temporary_path, const char *path, char *error,
+	size_t error_capacity) {
+	if (rename(temporary_path, path) != 0) {
+		int saved_errno = errno;
+		set_error(error, error_capacity, "cannot replace '%s': %s", path,
+			strerror(saved_errno));
+		discard_temporary_file(temporary_path);
+		return false;
+	}
+	free(temporary_path);
+	return true;
 }
 
 static void
@@ -968,12 +1059,15 @@ encode_profile(const lp_export_model *model, lp_buffer *profile) {
 }
 
 static bool
-write_gzip(const char *path, const lp_buffer *profile, char *error,
+write_gzip(int descriptor, const char *path, const lp_buffer *profile, char *error,
 	size_t error_capacity) {
-	gzFile file = gzopen(path, "wb");
+	gzFile file = gzdopen(descriptor, "wb");
 	if (file == NULL) {
-		set_error(error, error_capacity, "cannot open '%s' for writing: %s",
-			path, strerror(errno));
+		int saved_errno = errno;
+		(void)close(descriptor);
+		set_error(error, error_capacity,
+			"cannot initialize gzip stream for '%s': %s", path,
+			strerror(saved_errno));
 		return false;
 	}
 	size_t offset = 0;
@@ -1012,12 +1106,15 @@ write_folded_name(FILE *file, const char *name) {
 }
 
 static bool
-write_folded(const char *path, const lp_export_model *model, char *error,
-	size_t error_capacity) {
-	FILE *file = fopen(path, "wb");
+write_folded(int descriptor, const char *path, const lp_export_model *model,
+	char *error, size_t error_capacity) {
+	FILE *file = fdopen(descriptor, "wb");
 	if (file == NULL) {
-		set_error(error, error_capacity, "cannot open '%s': %s", path,
-			strerror(errno));
+		int saved_errno = errno;
+		(void)close(descriptor);
+		set_error(error, error_capacity,
+			"cannot initialize output stream for '%s': %s", path,
+			strerror(saved_errno));
 		return false;
 	}
 	for (size_t i = 0; i < model->sample_count; ++i) {
@@ -1039,9 +1136,16 @@ write_folded(const char *path, const lp_export_model *model, char *error,
 		}
 		(void)fprintf(file, " %" PRId64 "\n", value);
 	}
-	if (fclose(file) != 0) {
+	bool write_failed = ferror(file) != 0;
+	int write_errno = write_failed ? errno : 0;
+	int close_status = fclose(file);
+	if (close_status != 0 || write_failed) {
+		int saved_errno = close_status != 0 ? errno : write_errno;
+		if (saved_errno == 0) {
+			saved_errno = EIO;
+		}
 		set_error(error, error_capacity, "cannot finish '%s': %s", path,
-			strerror(errno));
+			strerror(saved_errno));
 		return false;
 	}
 	return true;
@@ -1068,8 +1172,22 @@ lp_export_result_with_symbols(const lp_result *result, const char *path,
 		return false;
 	}
 	bool success;
+	char *temporary_path = NULL;
+	int descriptor = -1;
 	if (format == LP_EXPORT_FOLDED) {
-		success = write_folded(path, &model, error, error_capacity);
+		success = open_temporary_file(path, &temporary_path, &descriptor,
+			error, error_capacity);
+		if (success) {
+			success = write_folded(descriptor, path, &model, error,
+				error_capacity);
+			if (success) {
+				success = commit_temporary_file(temporary_path, path, error,
+					error_capacity);
+			}
+			else {
+				discard_temporary_file(temporary_path);
+			}
+		}
 	}
 	else {
 		lp_buffer profile = { 0 };
@@ -1079,7 +1197,19 @@ lp_export_result_with_symbols(const lp_result *result, const char *path,
 				"out of memory while encoding profile");
 		}
 		else {
-			success = write_gzip(path, &profile, error, error_capacity);
+			success = open_temporary_file(path, &temporary_path, &descriptor,
+				error, error_capacity);
+			if (success) {
+				success = write_gzip(descriptor, path, &profile, error,
+					error_capacity);
+				if (success) {
+					success = commit_temporary_file(temporary_path, path, error,
+						error_capacity);
+				}
+				else {
+					discard_temporary_file(temporary_path);
+				}
+			}
 		}
 		buffer_dispose(&profile);
 	}
