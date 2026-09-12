@@ -2,6 +2,9 @@
 
 #include "lua_bridge.h"
 #include "luaprof/runtime.h"
+#if defined(LUAPROF_TESTING)
+#include "thread_timer_test.h"
+#endif
 
 #include <assert.h>
 #include <stdbool.h>
@@ -19,6 +22,31 @@ typedef struct test_vm {
 	lp_lua_bridge bridge;
 	lp_runtime *runtime;
 } test_vm;
+
+#if defined(LUAPROF_TESTING)
+static lp_thread_timer *memory_tick_timer;
+static bool inject_memory_tick;
+
+void __real_lp_runtime_memory_sample(lp_runtime *runtime,
+	uint64_t generation, void *allocation_pointer,
+	const lp_stack_frame *frames, size_t depth, bool truncated,
+	size_t allocation_size, uint64_t weighted_space,
+	uint64_t weighted_objects);
+
+void
+__wrap_lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
+	void *allocation_pointer, const lp_stack_frame *frames, size_t depth,
+	bool truncated, size_t allocation_size, uint64_t weighted_space,
+	uint64_t weighted_objects) {
+	if (inject_memory_tick) {
+		inject_memory_tick = false;
+		lp_thread_timer_test_inject_tick(memory_tick_timer, 0);
+	}
+	__real_lp_runtime_memory_sample(runtime, generation, allocation_pointer,
+		frames, depth, truncated, allocation_size, weighted_space,
+		weighted_objects);
+}
+#endif
 
 static void
 open_vm(test_vm *vm) {
@@ -200,6 +228,40 @@ test_repeated_combined_lifecycle(void) {
 	close_vm(&vm);
 }
 
+#if defined(LUAPROF_TESTING)
+static void
+test_memory_callback_is_profiler_overhead(void) {
+	test_vm vm;
+	open_vm(&vm);
+	lp_collector_config cpu_config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1 },
+	};
+	uint64_t cpu;
+	assert(lp_runtime_start(vm.runtime, vm.L, &cpu_config, &cpu) == LP_OK);
+	lp_collector_config memory_config = {
+		.kind = LP_COLLECTOR_MEMORY,
+		.value.memory = { .sample_bytes = 1, .track_free = false },
+	};
+	uint64_t memory;
+	assert(lp_runtime_start(vm.runtime, vm.L, &memory_config, &memory) ==
+		LP_OK);
+	memory_tick_timer = vm.bridge.cpu_timer;
+	inject_memory_tick = true;
+	run_chunk(vm.L, "local value = {}\n", "@memory_overhead.lua");
+	assert(!inject_memory_tick);
+	memory_tick_timer = NULL;
+	lp_result cpu_result = stop(&vm, LP_COLLECTOR_CPU, cpu);
+	lp_result memory_result = stop(&vm, LP_COLLECTOR_MEMORY, memory);
+	assert(cpu_result.stats.samples == 0);
+	assert(cpu_result.stats.profiler_overhead_events == 1);
+	assert(memory_result.stats.memory_samples != 0);
+	lp_result_dispose(&cpu_result);
+	lp_result_dispose(&memory_result);
+	close_vm(&vm);
+}
+#endif
+
 int
 main(int argc, char **argv) {
 	if (argc == 2 && strcmp(argv[1], "--lifecycle-only") == 0) {
@@ -211,6 +273,9 @@ main(int argc, char **argv) {
 	test_memory_stops_first();
 	test_cpu_stops_first();
 	test_repeated_combined_lifecycle();
+#if defined(LUAPROF_TESTING)
+	test_memory_callback_is_profiler_overhead();
+#endif
 	puts("luaprof combined CPU/memory sampling: ok");
 	return EXIT_SUCCESS;
 }

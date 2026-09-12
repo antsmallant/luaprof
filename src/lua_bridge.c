@@ -126,6 +126,27 @@ end_event_drain(lp_lua_bridge *bridge) {
 	}
 }
 
+static bool
+begin_profiler_work(lp_lua_bridge *bridge) {
+	if (!bridge->cpu_active) {
+		return false;
+	}
+	if (bridge->profiler_work_depth++ == 0) {
+		begin_event_drain(bridge);
+	}
+	return true;
+}
+
+static void
+end_profiler_work(lp_lua_bridge *bridge, bool entered) {
+	if (!entered || bridge->profiler_work_depth == 0) {
+		return;
+	}
+	if (--bridge->profiler_work_depth == 0) {
+		end_event_drain(bridge);
+	}
+}
+
 static void
 drain_cpu(lp_lua_bridge *bridge) {
 	if (scheduler_active(bridge)) {
@@ -139,11 +160,11 @@ drain_cpu(lp_lua_bridge *bridge) {
 static void
 safe_point(void *userdata, lua_State *L, unsigned int pending) {
 	lp_lua_bridge *bridge = userdata;
-	begin_event_drain(bridge);
+	bool entered = begin_profiler_work(bridge);
 	lp_runtime_safe_point(bridge->runtime, bridge->cpu_generation, L,
 		pending);
 	drain_cpu(bridge);
-	end_event_drain(bridge);
+	end_profiler_work(bridge, entered);
 }
 
 static void
@@ -158,13 +179,13 @@ state_change(void *userdata, lua_State *L, int state,
 		 * its final reference, so quiesce delivery, move the published slot
 		 * to the main thread, and consume those events while L is still live.
 		 */
-		begin_event_drain(bridge);
+		bool entered = begin_profiler_work(bridge);
 		lp_thread_timer_publish_state(bridge->cpu_timer,
 			bridge->main_state, LP_VM_HOST, NULL);
 		lp_runtime_state_change(bridge->runtime, bridge->cpu_generation, L,
 			LP_VM_HOST, NULL);
 		drain_thread_timer(bridge);
-		end_event_drain(bridge);
+		end_profiler_work(bridge, entered);
 		return;
 	}
 	if (scheduler_active(bridge)) {
@@ -178,9 +199,9 @@ state_change(void *userdata, lua_State *L, int state,
 	lp_runtime_state_change(bridge->runtime, bridge->cpu_generation, L,
 		(lp_vm_state)state, cfunction);
 	if (state == LP_VM_HOST && scheduler_active(bridge)) {
-		begin_event_drain(bridge);
+		bool entered = begin_profiler_work(bridge);
 		drain_cpu(bridge);
-		end_event_drain(bridge);
+		end_profiler_work(bridge, entered);
 	}
 }
 
@@ -188,6 +209,7 @@ static void
 allocation(void *userdata, lua_State *L,
 	const lua_ProfileAllocEvent *event) {
 	lp_lua_bridge *bridge = userdata;
+	bool entered = begin_profiler_work(bridge);
 	lp_runtime_allocation(bridge->runtime, bridge->memory_generation, L,
 		event->old_pointer, event->new_pointer, event->old_size,
 		event->new_size, event->success != 0);
@@ -204,6 +226,7 @@ allocation(void *userdata, lua_State *L,
 			bridge->memory_generation, event->new_pointer, frames, depth,
 			truncated, event->new_size, weighted_space, weighted_objects);
 	}
+	end_profiler_work(bridge, entered);
 }
 
 static void
@@ -280,11 +303,11 @@ stop_collector(void *userdata, lp_runtime *runtime,
 	(void)runtime;
 	if (kind == LP_COLLECTOR_CPU && bridge->cpu_generation == generation) {
 		if (scheduler_active(bridge)) {
-			begin_event_drain(bridge);
+			bool entered = begin_profiler_work(bridge);
 			(void)bridge->scheduler_api->target_quiesce(
 				bridge->scheduler_token);
 			drain_cpu(bridge);
-			end_event_drain(bridge);
+			end_profiler_work(bridge, entered);
 		}
 		else {
 			lp_thread_timer_disarm(bridge->cpu_timer);

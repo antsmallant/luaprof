@@ -45,6 +45,28 @@ typedef struct reuse_test {
 	_Atomic bool done;
 } reuse_test;
 
+static bool inject_memory_tick;
+
+void __real_lp_runtime_memory_sample(lp_runtime *runtime,
+	uint64_t generation, void *allocation_pointer,
+	const lp_stack_frame *frames, size_t depth, bool truncated,
+	size_t allocation_size, uint64_t weighted_space,
+	uint64_t weighted_objects);
+
+void
+__wrap_lp_runtime_memory_sample(lp_runtime *runtime, uint64_t generation,
+	void *allocation_pointer, const lp_stack_frame *frames, size_t depth,
+	bool truncated, size_t allocation_size, uint64_t weighted_space,
+	uint64_t weighted_objects) {
+	if (inject_memory_tick) {
+		inject_memory_tick = false;
+		lp_skynet_host_test_inject_tick_now(0);
+	}
+	__real_lp_runtime_memory_sample(runtime, generation, allocation_pointer,
+		frames, depth, truncated, allocation_size, weighted_space,
+		weighted_objects);
+}
+
 static void
 run_chunk(lua_State *L, const char *source, const char *name) {
 	assert(luaL_loadbufferx(L, source, strlen(source), name, NULL) == LUA_OK);
@@ -295,6 +317,50 @@ test_transition_tick_accounting(void) {
 	close_test(&test);
 }
 
+static void *
+memory_overhead_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(8);
+	lp_skynet_host_dispatch_enter(TARGET_HANDLE);
+	lp_collector_config cpu_config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1 },
+	};
+	assert(lp_runtime_start(test->runtime, test->L, &cpu_config,
+		&test->generation) == LP_OK);
+	lp_collector_config memory_config = {
+		.kind = LP_COLLECTOR_MEMORY,
+		.value.memory = { .sample_bytes = 1, .track_free = false },
+	};
+	uint64_t memory_generation;
+	assert(lp_runtime_start(test->runtime, test->L, &memory_config,
+		&memory_generation) == LP_OK);
+	inject_memory_tick = true;
+	run_chunk(test->L, "local value = {}\n", "@scheduler_memory_overhead.lua");
+	assert(!inject_memory_tick);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	lp_result memory_result;
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_MEMORY,
+		memory_generation, &memory_result) == LP_OK);
+	lp_result_dispose(&memory_result);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_memory_callback_is_profiler_overhead(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, memory_overhead_worker, &test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(test.result.stats.samples == 0);
+	assert(test.result.stats.profiler_overhead_events == 1);
+	close_test(&test);
+}
+
 static void
 wait_reuse_barrier(pthread_barrier_t *barrier) {
 	int status = pthread_barrier_wait(barrier);
@@ -365,6 +431,7 @@ main(void) {
 	test_concurrent_targets();
 	test_destroy_active_runtime();
 	test_transition_tick_accounting();
+	test_memory_callback_is_profiler_overhead();
 	test_target_reuse_with_concurrent_dispatch();
 	puts("luaprof scheduler CPU sampling: ok");
 	return EXIT_SUCCESS;

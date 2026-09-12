@@ -458,6 +458,19 @@ lp_skynet_host_test_inject_transition_tick(int overrun) {
 	inject_transition_overrun = overrun;
 	inject_transition_tick = true;
 }
+
+void
+lp_skynet_host_test_inject_tick_now(int overrun) {
+	if (current_worker == NULL) {
+		return;
+	}
+	siginfo_t info;
+	memset(&info, 0, sizeof(info));
+	info.si_code = SI_TIMER;
+	info.si_overrun = overrun;
+	info.si_value.sival_ptr = current_worker;
+	timer_signal_handler(host_signal, &info, NULL);
+}
 #endif
 
 static bool

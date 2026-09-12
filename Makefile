@@ -414,9 +414,13 @@ $(LUA55_CPU_SAMPLING_TEST): tests/integration/cpu_sampling_test.c $(RUNTIME_OBJE
 		-I$(INCLUDE_DIR) -I$(LUA55_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
 		-lm -ldl -pthread -lrt -o $@
 
-$(COMBINED_SAMPLING_TEST): tests/integration/combined_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
+$(COMBINED_SAMPLING_TEST): tests/integration/combined_sampling_test.c src/thread_timer_test.h $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_TEST_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
-		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) $^ $(LDLIBS) \
+		-DLUAPROF_TESTING -I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) \
+		tests/integration/combined_sampling_test.c $(RUNTIME_OBJECT) \
+		$(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_TEST_OBJECT) \
+		$(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(LUA_LIB) \
+		-Wl,--wrap=lp_runtime_memory_sample $(LDLIBS) \
 		-lm -ldl -pthread -lrt -o $@
 
 $(LUA46_COMBINED_SAMPLING_TEST): tests/integration/combined_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(LUA46_THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA46_LUA_BRIDGE_OBJECT) $(LUA46_LIB) | $(LUA46_BUILD_DIR)
@@ -447,7 +451,8 @@ $(LUA55_MEMORY_SAMPLING_TEST): tests/integration/memory_sampling_test.c $(RUNTIM
 
 $(SCHEDULER_SAMPLING_TEST): tests/integration/scheduler_sampling_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(SKYNET_HOST_TEST_OBJECT) $(LUA_LIB) | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Werror \
-		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) -Wl,-E $^ \
+		-I$(INCLUDE_DIR) -I$(LUA_SRC) -Isrc $(LDFLAGS) -Wl,-E \
+		-Wl,--wrap=lp_runtime_memory_sample $^ \
 		$(LDLIBS) -lm -ldl -pthread -lrt -o $@
 
 $(SKYNET_SIGNAL_MASK_TEST): tests/integration/skynet_signal_mask_test.c $(RUNTIME_OBJECT) $(CPU_CORE_OBJECT) $(MEMORY_CORE_OBJECT) $(THREAD_TIMER_OBJECT) $(SKYNET_BACKEND_OBJECT) $(LUA_BRIDGE_OBJECT) $(SKYNET_HOST_OBJECT) $(LUA_LIB) | $(BUILD_DIR)

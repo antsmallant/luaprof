@@ -11,6 +11,7 @@ typedef struct lp_lua_bridge {
 	uint64_t cpu_generation;
 	uint64_t scheduler_token;
 	uint64_t memory_generation;
+	unsigned int profiler_work_depth;
 	bool cpu_active;
 	bool memory_active;
 	bool scheduler_incompatible;
