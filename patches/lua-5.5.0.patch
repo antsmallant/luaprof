@@ -681,10 +681,10 @@ index 0000000000000000000000000000000000000000..5191f62b4684c48fabbc77abbc0200b2
 +}
 diff --git a/src/lprofile.h b/src/lprofile.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..2b88e56b1796a16341db36680ae2b15e6652e4f4
+index 0000000000000000000000000000000000000000..656852c4172d65abc162e6d71df2de69b42740ca
 --- /dev/null
 +++ b/src/lprofile.h
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,105 @@
 +/*
 +** Internal sampling-profiler bridge
 +*/
@@ -752,6 +752,10 @@ index 0000000000000000000000000000000000000000..2b88e56b1796a16341db36680ae2b15e
 +        l_unlikely(G(L)->profilehooks.allocation != NULL)) \
 +      luaP_allocation_(L, oldp, newp, olds, news, success); }
 +
++#define luaP_allocationpc(L,ci,pc) \
++  { if (l_unlikely(G(L)->profilehooks.allocation != NULL)) \
++      (ci)->u.l.savedpc = (pc); }
++
 +#define luaP_initthread(L) \
 +  { (L)->profilestate = LUA_PROFILE_HOST; \
 +    (L)->profilecaptureblocked = 0; \
@@ -777,6 +781,7 @@ index 0000000000000000000000000000000000000000..2b88e56b1796a16341db36680ae2b15e
 +#define luaP_sethoststate(L)                      ((void)0)
 +#define luaP_safepoint(L)                         ((void)0)
 +#define luaP_allocation(L,oldp,newp,olds,news,success)  ((void)0)
++#define luaP_allocationpc(L,ci,pc)                      ((void)0)
 +#define luaP_initthread(L)                        ((void)0)
 +#define luaP_initglobal(g)                        ((void)0)
 +#define luaP_blockcapture(L)                      ((void)0)
@@ -955,7 +960,7 @@ index ab473dc3e4a74d81f57c4a1ed3da80147fc2efa3..9be35d17eab253e8f9b1c895dd738256
  /*
  ** basic stack manipulation
 diff --git a/src/lvm.c b/src/lvm.c
-index c70e2b8a8aa615e0108daab58e348c05f6f73463..272bda2b71714f64f073e70115341b74109d827f 100644
+index c70e2b8a8aa615e0108daab58e348c05f6f73463..ff7fb13d7e23d504199bb5d2e2030c7fee846bec 100644
 --- a/src/lvm.c
 +++ b/src/lvm.c
 @@ -25,6 +25,7 @@
@@ -986,7 +991,15 @@ index c70e2b8a8aa615e0108daab58e348c05f6f73463..272bda2b71714f64f073e70115341b74
   startfunc:
    trap = L->hookmask;
   returning:  /* trap already set */
-@@ -1821,8 +1825,10 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+@@ -1409,6 +1413,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+         unsigned b = cast_uint(GETARG_vB(i));  /* log2(hash size) + 1 */
+         unsigned c = cast_uint(GETARG_vC(i));  /* array size */
+         Table *t;
++        luaP_allocationpc(L, ci, pc);
+         if (b > 0)
+           b = 1u << (b - 1);  /* hash size is 2^(b - 1) */
+         if (TESTARG_k(i)) {  /* non-zero extra argument? */
+@@ -1821,8 +1826,10 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
            }
          }
         ret:  /* return from a Lua function */
@@ -998,3 +1011,11 @@ index c70e2b8a8aa615e0108daab58e348c05f6f73463..272bda2b71714f64f073e70115341b74
          else {
            ci = ci->previous;
            goto returning;  /* continue running caller in this frame */
+@@ -1900,6 +1907,7 @@ void luaV_execute (lua_State *L, CallInfo *ci) {
+       }}
+       vmcase(OP_SETLIST) {
+         StkId ra = RA(i);
++        luaP_allocationpc(L, ci, pc);
+         unsigned n = cast_uint(GETARG_vB(i));
+         unsigned last = cast_uint(GETARG_vC(i));
+         Table *h = hvalue(s2v(ra));

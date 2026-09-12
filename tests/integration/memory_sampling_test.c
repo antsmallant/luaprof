@@ -171,6 +171,79 @@ result_has_source(const lp_result *result, const char *source) {
 	return 0;
 }
 
+static uint64_t
+leaf_alloc_space_at_line(const lp_result *result, const char *source,
+	int currentline) {
+	size_t source_length = strlen(source);
+	uint64_t total = 0;
+	for (size_t i = 0; i < lp_result_memory_sample_count(result); ++i) {
+		lp_memory_sample_view sample;
+		assert(lp_result_memory_sample(result, i, &sample));
+		if (sample.depth == 0) {
+			continue;
+		}
+		lp_memory_frame_view frame;
+		assert(lp_result_memory_frame(result, i, 0, &frame));
+		if (frame.currentline == currentline && frame.source != NULL &&
+			frame.source_length == source_length &&
+			memcmp(frame.source, source, source_length) == 0) {
+			total += sample.alloc_space;
+		}
+	}
+	return total;
+}
+
+static void
+test_table_allocation_lines(void) {
+	static const char source[] =
+		"local function build_tables()\n"
+		"  local marker = math.abs(-1)\n"
+		"  local first = {}\n"
+		"  local second = {}\n"
+		"  return marker, first, second\n"
+		"end\n"
+		"return build_tables()\n";
+	test_vm vm;
+	open_vm(&vm);
+	assert(luaL_loadbufferx(vm.L, source, sizeof(source) - 1,
+		"@memory_lines.lua", NULL) == LUA_OK);
+	uint64_t generation = start_memory(&vm, 1, false);
+	assert(lua_pcall(vm.L, 0, 3, 0) == LUA_OK);
+	lp_result result = stop_memory(&vm, generation);
+	assert(leaf_alloc_space_at_line(&result, "@memory_lines.lua", 3) != 0);
+	assert(leaf_alloc_space_at_line(&result, "@memory_lines.lua", 4) != 0);
+	lua_pop(vm.L, 3);
+	lp_result_dispose(&result);
+	close_vm(&vm);
+}
+
+static void
+test_setlist_allocation_line(void) {
+	static const char source[] =
+		"local function values()\n"
+		"  return 1, 2, 3\n"
+		"end\n"
+		"local function build_table()\n"
+		"  local result = {\n"
+		"    values()\n"
+		"  }\n"
+		"  return result\n"
+		"end\n"
+		"return build_table()\n";
+	test_vm vm;
+	open_vm(&vm);
+	assert(luaL_loadbufferx(vm.L, source, sizeof(source) - 1,
+		"@memory_setlist.lua", NULL) == LUA_OK);
+	uint64_t generation = start_memory(&vm, 1, false);
+	assert(lua_pcall(vm.L, 0, 1, 0) == LUA_OK);
+	lp_result result = stop_memory(&vm, generation);
+	assert(leaf_alloc_space_at_line(&result, "@memory_setlist.lua", 5) != 0);
+	assert(leaf_alloc_space_at_line(&result, "@memory_setlist.lua", 7) != 0);
+	lua_pop(vm.L, 1);
+	lp_result_dispose(&result);
+	close_vm(&vm);
+}
+
 static void
 test_exact_mode(void) {
 	test_vm vm;
@@ -262,6 +335,8 @@ test_exact_live_mode(void) {
 
 int
 main(void) {
+	test_table_allocation_lines();
+	test_setlist_allocation_line();
 	test_exact_mode();
 	test_sampled_mode();
 	test_exact_live_mode();

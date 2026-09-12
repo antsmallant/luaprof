@@ -5,10 +5,10 @@ submodule，也可以把 VM bridge 和宿主集成应用到对应源码。
 
 | Patch | 验证基线 | luaprof target |
 | --- | --- | --- |
-| `lua-5.4.6.patch` | `0858f40a3a6e171445a90d60cead721a0007a33d` | `0119ebc30b7827930c4a96ede96c111b52d20183` |
-| `lua-5.4.8.patch` | `ef6de10bbcfe86f6bc113b8ca2d241eef3cb049b` | `43225b31438d0d003fdc32f326d3a95993f7ad07` |
-| `lua-5.5.0.patch` | `0b13c63981247b5753070caddaad785c0ec840f3` | `9270ea15f5f37873c9394d5ea33b65f88249f704` |
-| `skynet.patch` | `f19d1605b4b313c27d9931582c3153313a571492` | `5606145d4cd6e111ee258cf893e395c9ce586923` |
+| `lua-5.4.6.patch` | `0858f40a3a6e171445a90d60cead721a0007a33d` | `db3b39464e30794c56549ae2eeaa0858b244542a` |
+| `lua-5.4.8.patch` | `ef6de10bbcfe86f6bc113b8ca2d241eef3cb049b` | `30eeb277b4f423ace2032364157dc741be7f0ac1` |
+| `lua-5.5.0.patch` | `0b13c63981247b5753070caddaad785c0ec840f3` | `57310befe74f760d18f698bdf6773537329ad961` |
+| `skynet.patch` | `f19d1605b4b313c27d9931582c3153313a571492` | `42d2adf84aab44659ab98f845f8fce3aed4a3fd8` |
 
 Lua patch 只包含 VM bridge，不包含 fork 的 `.gitignore`。`skynet.patch` 是一个整体，
 同时包含 Skynet 内嵌 Lua bridge、worker/dispatch hook 和构建集成，不能只应用其中一部分。

@@ -167,6 +167,12 @@ free 和失败的 realloc 不消耗采样预算。成功 realloc 视为旧 block
 新 requested size 进行一次 allocation。事件来自 Lua 内部 allocator wrapper，因此
 包含准确的 `lua_State *`、旧/新指针、旧/新 requested size 和成功状态。
 
+allocation callback 会同步捕获当时的 Lua 栈。可能直接分配的 `OP_NEWTABLE` 和
+`OP_SETLIST` 在 memory hook 活动时先发布当前 opcode PC；字符串拼接、closure、
+vararg/stack growth 等可能分配的路径则通过 VM 原有的 protected path 保存 PC。因此
+memory frame 的 `currentline` 指向触发分配的 opcode，而不是上一条碰巧保存 PC 的指令。
+未编译 luaprof 时该发布宏为空，不增加默认 VM fast path 开销。
+
 内存 profile 只覆盖目标 Lua VM 通过其 Lua allocator 产生的事件。它不是进程 RSS、
 物理内存、Skynet C 层 allocation，也不是遍历 VM 对象得到的 heap snapshot。
 
