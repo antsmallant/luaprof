@@ -132,6 +132,28 @@ assert(profile.cpu.start():stop())
 local cpu_path = "/tmp/luaprof-api-cpu.pb.gz"
 local memory_path = "/tmp/luaprof-api-memory.pb.gz"
 local folded_path = "/tmp/luaprof-api-memory.folded"
+local nul_path = "/tmp/luaprof-api-nul-path"
+local nul_file = assert(io.open(nul_path, "wb"))
+assert(nul_file:write "sentinel")
+assert(nul_file:close())
+local nul_ok, nul_error = pcall(memory_result.write, memory_result,
+    nul_path .. "\0ignored")
+assert(not nul_ok)
+assert(nul_error:match "path must not contain NUL bytes")
+nul_file = assert(io.open(nul_path, "rb"))
+assert(nul_file:read "a" == "sentinel")
+assert(nul_file:close())
+nul_ok, nul_error = pcall(memory_result.write, memory_result, nul_path, {
+    format = "folded\0ignored",
+})
+assert(not nul_ok)
+assert(nul_error:match "format must not contain NUL bytes")
+nul_ok, nul_error = pcall(memory_result.write, memory_result, nul_path, {
+    sample = "alloc_space\0ignored",
+})
+assert(not nul_ok)
+assert(nul_error:match "sample must not contain NUL bytes")
+assert(os.remove(nul_path))
 assert(cpu_result:write(cpu_path))
 assert(memory_result:write(memory_path, { sample = "alloc_space" }))
 assert(memory_result:write(folded_path, {

@@ -145,6 +145,17 @@ check_no_unknown_options(lua_State *L, int index, const char *first,
 	}
 }
 
+static const char *
+check_c_string(lua_State *L, int index, int argument, const char *name,
+	size_t *length) {
+	const char *value = luaL_checklstring(L, index, length);
+	if (memchr(value, '\0', *length) != NULL) {
+		luaL_argerror(L, argument, lua_pushfstring(L,
+			"%s must not contain NUL bytes", name));
+	}
+	return value;
+}
+
 static lp_collector_config
 cpu_config(lua_State *L) {
 	lp_collector_config config = {
@@ -431,7 +442,8 @@ result_stats(lua_State *L) {
 static int
 result_write(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
-	const char *path = luaL_checkstring(L, 2);
+	size_t path_length;
+	const char *path = check_c_string(L, 2, 2, "path", &path_length);
 	lp_export_format format = LP_EXPORT_PPROF;
 	const char *sample_type = NULL;
 	if (!lua_isnoneornil(L, 3)) {
@@ -439,7 +451,9 @@ result_write(lua_State *L) {
 		check_no_unknown_options(L, 3, "format", "sample");
 		lua_getfield(L, 3, "format");
 		if (!lua_isnil(L, -1)) {
-			const char *name = luaL_checkstring(L, -1);
+			size_t name_length;
+			const char *name = check_c_string(L, -1, 3, "format",
+				&name_length);
 			if (strcmp(name, "pprof") == 0) {
 				format = LP_EXPORT_PPROF;
 			}
@@ -454,7 +468,9 @@ result_write(lua_State *L) {
 		lua_pop(L, 1);
 		lua_getfield(L, 3, "sample");
 		if (!lua_isnil(L, -1)) {
-			sample_type = luaL_checkstring(L, -1);
+			size_t sample_length;
+			sample_type = check_c_string(L, -1, 3, "sample",
+				&sample_length);
 		}
 		lua_pop(L, 1);
 	}
