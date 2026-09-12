@@ -361,6 +361,40 @@ test_memory_callback_is_profiler_overhead(void) {
 	close_test(&test);
 }
 
+static void *
+module_overhead_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(9);
+	lp_skynet_host_dispatch_enter(TARGET_HANDLE);
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1 },
+	};
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_OK);
+	bool entered = lp_lua_bridge_begin_profiler_work(&test->bridge);
+	assert(entered);
+	lp_skynet_host_test_inject_tick_now(0);
+	lp_lua_bridge_end_profiler_work(&test->bridge, entered);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	return NULL;
+}
+
+static void
+test_module_work_is_profiler_overhead(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, module_overhead_worker, &test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(test.result.stats.samples == 0);
+	assert(test.result.stats.profiler_overhead_events == 1);
+	close_test(&test);
+}
+
 static void
 wait_reuse_barrier(pthread_barrier_t *barrier) {
 	int status = pthread_barrier_wait(barrier);
@@ -432,6 +466,7 @@ main(void) {
 	test_destroy_active_runtime();
 	test_transition_tick_accounting();
 	test_memory_callback_is_profiler_overhead();
+	test_module_work_is_profiler_overhead();
 	test_target_reuse_with_concurrent_dispatch();
 	puts("luaprof scheduler CPU sampling: ok");
 	return EXIT_SUCCESS;

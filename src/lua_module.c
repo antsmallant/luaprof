@@ -21,6 +21,7 @@ _Static_assert(LUA_PROFILE_ABI_VERSION == 2,
 	"luaprof module built against an unexpected profiler bridge ABI");
 
 #define LP_RUNTIME_METATABLE "luaprof.runtime"
+#define LP_WORK_GUARD_METATABLE "luaprof.work_guard"
 #define LP_RECORDER_METATABLE "luaprof.recorder"
 #define LP_RESULT_METATABLE "luaprof.result"
 #define LP_DEFAULT_SAMPLE_BYTES (512u * 1024u)
@@ -42,6 +43,17 @@ typedef struct lp_lua_result {
 	lp_result value;
 } lp_lua_result;
 
+typedef struct lp_lua_work_guard {
+	lp_lua_bridge *bridge;
+} lp_lua_work_guard;
+
+#if defined(LUAPROF_TESTING)
+void lp_lua_module_test_point(lua_State *L, const char *name);
+#define module_test_point(L,name) lp_lua_module_test_point((L), (name))
+#else
+#define module_test_point(L,name) ((void)0)
+#endif
+
 static const char runtime_registry_key;
 
 static const char *
@@ -57,8 +69,9 @@ runtime_holder(lua_State *L) {
 	}
 	lua_pop(L, 1);
 
-	lp_runtime_holder *holder = lua_newuserdatauv(L, sizeof(*holder), 0);
+	lp_runtime_holder *holder = lua_newuserdatauv(L, sizeof(*holder), 1);
 	holder->runtime = NULL;
+	luaL_setmetatable(L, LP_RUNTIME_METATABLE);
 	lua_rawgeti(L, LUA_REGISTRYINDEX, LUA_RIDX_MAINTHREAD);
 	lua_State *main_state = lua_tothread(L, -1);
 	lua_pop(L, 1);
@@ -70,10 +83,31 @@ runtime_holder(lua_State *L) {
 		return NULL;
 	}
 	lp_lua_bridge_bind(&holder->bridge, holder->runtime);
-	luaL_setmetatable(L, LP_RUNTIME_METATABLE);
+	lp_lua_work_guard *guard = lua_newuserdatauv(L, sizeof(*guard), 0);
+	guard->bridge = &holder->bridge;
+	luaL_setmetatable(L, LP_WORK_GUARD_METATABLE);
+	lua_setiuservalue(L, -2, 1);
 	lua_pushvalue(L, -1);
 	lua_rawsetp(L, LUA_REGISTRYINDEX, &runtime_registry_key);
 	return holder;
+}
+
+static bool
+push_profiler_work_guard(lua_State *L) {
+	lua_rawgetp(L, LUA_REGISTRYINDEX, &runtime_registry_key);
+	if (!lua_isuserdata(L, -1)) {
+		lua_pop(L, 1);
+		return false;
+	}
+	lua_getiuservalue(L, -1, 1);
+	lua_remove(L, -2);
+	lp_lua_work_guard *guard = lua_touserdata(L, -1);
+	if (guard == NULL || !lp_lua_bridge_begin_profiler_work(guard->bridge)) {
+		lua_pop(L, 1);
+		return false;
+	}
+	lua_toclose(L, -1);
+	return true;
 }
 
 static int
@@ -82,6 +116,15 @@ runtime_gc(lua_State *L) {
 		LP_RUNTIME_METATABLE);
 	lp_runtime_delete(holder->runtime);
 	holder->runtime = NULL;
+	return 0;
+}
+
+static int
+profiler_work_guard_close(lua_State *L) {
+	lp_lua_work_guard *guard = lua_touserdata(L, 1);
+	if (guard != NULL) {
+		lp_lua_bridge_end_profiler_work(guard->bridge, true);
+	}
 	return 0;
 }
 
@@ -193,12 +236,17 @@ start_recorder(lua_State *L, lp_collector_config config) {
 
 static int
 cpu_start(lua_State *L) {
-	return start_recorder(L, cpu_config(L));
+	lp_collector_config config = cpu_config(L);
+	(void)push_profiler_work_guard(L);
+	return start_recorder(L, config);
 }
 
 static int
 memory_start(lua_State *L) {
-	return start_recorder(L, memory_config(L));
+	lp_collector_config config = memory_config(L);
+	(void)push_profiler_work_guard(L);
+	module_test_point(L, "memory_start");
+	return start_recorder(L, config);
 }
 
 static int
@@ -209,6 +257,10 @@ recorder_stop(lua_State *L) {
 		lua_pushnil(L);
 		lua_pushliteral(L, "luaprof recorder is already stopped");
 		return 2;
+	}
+	if (recorder->kind != LP_COLLECTOR_CPU) {
+		(void)push_profiler_work_guard(L);
+		module_test_point(L, "memory_stop");
 	}
 
 	lua_getiuservalue(L, 1, 2);
@@ -233,6 +285,9 @@ recorder_gc(lua_State *L) {
 	lp_lua_recorder *recorder = luaL_checkudata(L, 1,
 		LP_RECORDER_METATABLE);
 	if (recorder->active) {
+		if (recorder->kind != LP_COLLECTOR_CPU) {
+			(void)push_profiler_work_guard(L);
+		}
 		lp_result ignored = { 0 };
 		(void)lp_runtime_stop(recorder->runtime, L, recorder->kind,
 			recorder->generation, &ignored);
@@ -245,6 +300,7 @@ recorder_gc(lua_State *L) {
 static int
 result_gc(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
+	(void)push_profiler_work_guard(L);
 	lp_result_dispose(&result->value);
 	return 0;
 }
@@ -253,6 +309,7 @@ static int
 recorder_tostring(lua_State *L) {
 	lp_lua_recorder *recorder = luaL_checkudata(L, 1,
 		LP_RECORDER_METATABLE);
+	(void)push_profiler_work_guard(L);
 	lua_pushfstring(L, "luaprof.%s.recorder(%s, generation=%I)",
 		kind_name(recorder->kind), recorder->active ? "active" : "stopped",
 		(lua_Integer)recorder->generation);
@@ -262,6 +319,8 @@ recorder_tostring(lua_State *L) {
 static int
 result_stats(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
+	(void)push_profiler_work_guard(L);
+	module_test_point(L, "result_stats");
 	lua_createtable(L, 0, 7);
 	lua_pushstring(L, kind_name(result->value.kind));
 	lua_setfield(L, -2, "kind");
@@ -399,6 +458,8 @@ result_write(lua_State *L) {
 		}
 		lua_pop(L, 1);
 	}
+	(void)push_profiler_work_guard(L);
+	module_test_point(L, "result_write");
 	char error[256];
 	lp_lua_symbols *lua_symbols = lp_lua_symbols_collect(L);
 	lp_export_symbols symbols = {
@@ -421,6 +482,7 @@ result_write(lua_State *L) {
 static int
 result_tostring(lua_State *L) {
 	lp_lua_result *result = luaL_checkudata(L, 1, LP_RESULT_METATABLE);
+	(void)push_profiler_work_guard(L);
 	lua_pushfstring(L, "luaprof.%s.result(generation=%I)",
 		kind_name(result->value.kind), (lua_Integer)result->value.generation);
 	return 1;
@@ -431,6 +493,12 @@ create_metatables(lua_State *L) {
 	if (luaL_newmetatable(L, LP_RUNTIME_METATABLE)) {
 		lua_pushcfunction(L, runtime_gc);
 		lua_setfield(L, -2, "__gc");
+	}
+	lua_pop(L, 1);
+
+	if (luaL_newmetatable(L, LP_WORK_GUARD_METATABLE)) {
+		lua_pushcfunction(L, profiler_work_guard_close);
+		lua_setfield(L, -2, "__close");
 	}
 	lua_pop(L, 1);
 

@@ -147,8 +147,9 @@ native profiler。GC 和 host 状态使用 synthetic frame。
 - `state_lua`、`state_c`、`state_gc`、`state_host`：VM 状态切换次数。
 - `dropped_events`：固定 event ring 已满而丢失的实际 delivery 数。
 - `unstable_events`：execution slot 发布竞争期间被拒绝的实际 delivery 数。
-- `profiler_overhead_events`：CPU safe-point drain 或同步 memory allocation callback 等
-  profiler 数据采集期间到达、因而不归入业务栈的实际 delivery 数。
+- `profiler_overhead_events`：CPU safe-point drain、同步 memory allocation callback，或
+  Lua profiler API 的启动、停止、统计和导出等管理工作期间到达、因而不归入业务栈的
+  实际 delivery 数。保护区支持嵌套，并在 Lua error/OOM 展开 C 调用栈时自动退出。
 - `stale_events`：Skynet generation 或迁移边界拒绝的实际 delivery 数。
 - `scheduler_workers`：Skynet target 实际使用过的 worker 数。
 - `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：有界存储的质量计数器。
