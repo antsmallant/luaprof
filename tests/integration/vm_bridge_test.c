@@ -29,6 +29,8 @@ typedef struct bridge_stats {
 	int saw_lua_frame;
 	int saw_named_lua_frame;
 	int saw_truncated_stack;
+	int expected_previous_line;
+	int saw_previous_opcode_line;
 	lua_State *last_event_state;
 } bridge_stats;
 
@@ -88,6 +90,14 @@ safe_point(void *userdata, lua_State *L, unsigned int pending) {
 			if (frames[i].name != NULL && frames[i].name_length != 0) {
 				stats->saw_named_lua_frame = 1;
 			}
+			if (stats->expected_previous_line != 0 &&
+				frames[i].source_length ==
+					sizeof("@vm_line_workload.lua") - 1u &&
+				memcmp(frames[i].source, "@vm_line_workload.lua",
+					frames[i].source_length) == 0 &&
+				frames[i].currentline == stats->expected_previous_line) {
+				stats->saw_previous_opcode_line = 1;
+			}
 		}
 		else {
 			assert(frames[i].kind == LUA_PROFILE_FRAME_C);
@@ -101,6 +111,10 @@ safe_point(void *userdata, lua_State *L, unsigned int pending) {
 	stats->safe_weight += pending;
 	if (L != stats->main_state) {
 		stats->saw_coroutine_event = 1;
+	}
+	if (stats->expected_previous_line != 0) {
+		assert(stats->saw_previous_opcode_line);
+		stats->expected_previous_line = 0;
 	}
 }
 
@@ -172,6 +186,15 @@ request_ticks(lua_State *L) {
 	assert(current == request_ticks);
 	stats->saw_request_cfunction = 1;
 	lua_profile_request(L, (unsigned int)luaL_checkinteger(L, 1));
+	return 0;
+}
+
+static int
+request_line_tick(lua_State *L) {
+	bridge_stats *stats = lua_touserdata(L, lua_upvalueindex(1));
+	assert(stats->expected_previous_line == 0);
+	stats->expected_previous_line = 2;
+	lua_profile_request(L, 1);
 	return 0;
 }
 
@@ -282,6 +305,22 @@ run_workload(lua_State *L) {
 }
 
 static void
+run_line_workload(lua_State *L) {
+	static const char workload[] =
+		"local function line_target()\n"
+		"  request_line_tick()\n"
+		"  local next_line = 1\n"
+		"  return next_line\n"
+		"end\n"
+		"debug.sethook(function() end, 'l')\n"
+		"assert(line_target() == 1)\n"
+		"debug.sethook()\n";
+	assert(luaL_loadbufferx(L, workload, sizeof(workload) - 1,
+		"@vm_line_workload.lua", NULL) == LUA_OK);
+	assert(lua_pcall(L, 0, 0, 0) == LUA_OK);
+}
+
+static void
 force_realloc_failure(lua_State *L, allocator_context *allocator) {
 	char *source = malloc(128 * 1024);
 	assert(source != NULL);
@@ -324,6 +363,7 @@ main(void) {
 	lua_setprofilehooks(L, &hooks, &stats);
 
 	set_function(L, "request_ticks", request_ticks, &stats);
+	set_function(L, "request_line_tick", request_line_tick, &stats);
 	set_function(L, "call_lua", call_lua, NULL);
 	set_function(L, "raise_from_c", raise_from_c, NULL);
 	set_function(L, "yield_from_c", yield_from_c, NULL);
@@ -335,16 +375,18 @@ main(void) {
 	lua_setprofilehooks(L, &hooks, &stats);
 	lua_profile_request(L, 3);
 	run_workload(L);
+	run_line_workload(L);
 	force_realloc_failure(L, &allocator);
 
 	lua_CFunction current = (lua_CFunction)request_ticks;
 	assert(lua_getprofilestate(L, &current) == LUA_PROFILE_HOST);
 	assert(current == NULL);
 	assert(stats.safe_calls >= 3);
-	assert(stats.safe_weight == 24);
+	assert(stats.safe_weight == 25);
 	assert(stats.saw_lua_frame);
 	assert(stats.saw_named_lua_frame);
 	assert(stats.saw_truncated_stack);
+	assert(stats.saw_previous_opcode_line);
 	assert(stats.states[LUA_PROFILE_LUA] != 0);
 	assert(stats.states[LUA_PROFILE_C] != 0);
 	assert(stats.states[LUA_PROFILE_GC] != 0);

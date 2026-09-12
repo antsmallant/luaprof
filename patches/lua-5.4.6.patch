@@ -403,10 +403,10 @@ index 9800a86fc024fb33d0d6ed60f369fba2506680d3..6fd7c503ee50b5fab244469842291c49
  }
 diff --git a/src/lprofile.c b/src/lprofile.c
 new file mode 100644
-index 0000000000000000000000000000000000000000..5191f62b4684c48fabbc77abbc0200b28e0b7e60
+index 0000000000000000000000000000000000000000..429176f44f2c4446baa779539c9ea334f9ae72b5
 --- /dev/null
 +++ b/src/lprofile.c
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,274 @@
 +/*
 +** Sampling-profiler bridge
 +*/
@@ -561,8 +561,10 @@ index 0000000000000000000000000000000000000000..5191f62b4684c48fabbc77abbc0200b2
 +  pending = takepending(g);
 +  if (pending == 0)
 +    return;
-+  if (isLua(L->ci))
-+    L->ci->u.l.savedpc = pc + 1;
++  if (isLua(L->ci)) {
++    Proto *p = ci_func(L->ci)->p;
++    L->ci->u.l.savedpc = (pc == p->code) ? pc + 1 : pc;
++  }
 +  g->profileincallback = 1;
 +  callback(g->ud_profile, L, pending);
 +  g->profileincallback = 0;
