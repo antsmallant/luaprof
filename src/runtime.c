@@ -272,6 +272,20 @@ lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 		return;
 	}
 	*counter = saturating_add(*counter, 1);
+	lp_runtime_memory_reconcile_live(runtime, generation, old_pointer,
+		new_pointer, new_size, success);
+}
+
+void
+lp_runtime_memory_reconcile_live(lp_runtime *runtime, uint64_t generation,
+	void *old_pointer, void *new_pointer, size_t new_size, bool success) {
+	if (runtime == NULL) {
+		return;
+	}
+	lp_collector_slot *slot = &runtime->collectors[LP_COLLECTOR_MEMORY];
+	if (!slot->active || slot->generation != generation) {
+		return;
+	}
 	lp_memory_profile_allocation_event(slot->memory_profile, old_pointer,
 		new_pointer, new_size, success);
 }

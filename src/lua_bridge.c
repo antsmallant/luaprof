@@ -214,6 +214,9 @@ allocation(void *userdata, lua_State *L,
 	const lua_ProfileAllocEvent *event) {
 	lp_lua_bridge *bridge = userdata;
 	if (bridge->profiler_work_depth != 0) {
+		lp_runtime_memory_reconcile_live(bridge->runtime,
+			bridge->memory_generation, event->old_pointer,
+			event->new_pointer, event->new_size, event->success != 0);
 		return;
 	}
 	bool entered = lp_lua_bridge_begin_profiler_work(bridge);

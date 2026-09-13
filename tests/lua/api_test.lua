@@ -45,6 +45,61 @@ local function test_profiler_memory_exclusion()
 end
 test_profiler_memory_exclusion()
 
+local function test_delayed_profiler_free_is_raw_only()
+    local frozen_recorder = assert(profile.cpu.start { sample_hz = 1 })
+    local frozen = assert(frozen_recorder:stop())
+    collectgarbage "collect"
+    collectgarbage "collect"
+    local memory_guard = assert(profile.memory.start {
+        sample_bytes = 1,
+        track_free = true,
+    })
+    local internal_stats = frozen:stats()
+    internal_stats = nil
+    collectgarbage "collect"
+    collectgarbage "collect"
+    local stats = assert(memory_guard:stop()):stats()
+    assert(stats.allocation_events == 0)
+    assert(stats.reallocation_events == 0)
+    assert(stats.free_events > 0)
+    assert(stats.samples == 0)
+    assert(stats.alloc_space == 0)
+    assert(stats.alloc_objects == 0)
+    assert(stats.inuse_space == 0)
+    assert(stats.inuse_objects == 0)
+end
+test_delayed_profiler_free_is_raw_only()
+
+local function test_guarded_gc_reconciles_live_samples()
+    local victim
+    local cpu_options = setmetatable({}, {
+        __index = function(_, key)
+            if key == "sample_hz" then
+                victim = nil
+                collectgarbage "collect"
+                collectgarbage "collect"
+                return 1
+            end
+        end,
+    })
+    collectgarbage "collect"
+    local memory_guard = assert(profile.memory.start {
+        sample_bytes = 1,
+        track_free = true,
+    })
+    victim = {}
+    for i = 1, 1000 do
+        victim[i] = { i, i }
+    end
+    local cpu_guard = assert(profile.cpu.start(cpu_options))
+    assert(cpu_guard:stop())
+    local stats = assert(memory_guard:stop()):stats()
+    assert(stats.alloc_space > 64 * 1024)
+    assert(stats.inuse_space == 0, stats.inuse_space)
+    assert(stats.inuse_objects == 0, stats.inuse_objects)
+end
+test_guarded_gc_reconciles_live_samples()
+
 do
     local abandoned_memory <close> = assert(profile.memory.start {
         sample_bytes = 1,
@@ -147,6 +202,11 @@ ok = pcall(profile.cpu.start, { sample_hz = 0 })
 assert(not ok)
 ok = pcall(profile.cpu.start, { sample_hz = 10001 })
 assert(not ok)
+ok = pcall(profile.cpu.start, { ["sample_hz\0ignored"] = 1 })
+assert(not ok)
+ok = pcall(profile.memory.start, { ["sample_bytes\0ignored"] = 1 })
+assert(not ok)
+assert(profile.memory.start():stop())
 
 local abandoned = assert(profile.cpu.start())
 abandoned = nil
@@ -177,6 +237,14 @@ nul_ok, nul_error = pcall(memory_result.write, memory_result, nul_path, {
 })
 assert(not nul_ok)
 assert(nul_error:match "sample must not contain NUL bytes")
+nul_ok, nul_error = pcall(memory_result.write, memory_result, nul_path, {
+    ["format\0ignored"] = "folded",
+})
+assert(not nul_ok)
+assert(nul_error:match "unknown profile option")
+nul_file = assert(io.open(nul_path, "rb"))
+assert(nul_file:read "a" == "sentinel")
+assert(nul_file:close())
 assert(os.remove(nul_path))
 assert(cpu_result:write(cpu_path))
 assert(memory_result:write(memory_path, { sample = "alloc_space" }))

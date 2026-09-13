@@ -182,6 +182,9 @@ void lp_runtime_state_change(lp_runtime *runtime, uint64_t generation,
 void lp_runtime_allocation(lp_runtime *runtime, uint64_t generation,
 	lua_State *current_state, void *old_pointer, void *new_pointer,
 	size_t old_size, size_t new_size, bool success);
+void lp_runtime_memory_reconcile_live(lp_runtime *runtime,
+	uint64_t generation, void *old_pointer, void *new_pointer,
+	size_t new_size, bool success);
 bool lp_runtime_memory_sample_candidate(lp_runtime *runtime,
 	uint64_t generation, void *old_pointer, void *new_pointer,
 	size_t new_size, bool success, uint64_t *weighted_space,

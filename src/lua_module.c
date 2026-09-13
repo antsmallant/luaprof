@@ -136,11 +136,14 @@ check_no_unknown_options(lua_State *L, int index, const char *first,
 	const char *second) {
 	lua_pushnil(L);
 	while (lua_next(L, index) != 0) {
+		size_t key_length = 0;
 		const char *key = lua_type(L, -2) == LUA_TSTRING
-			? lua_tostring(L, -2) : NULL;
+			? lua_tolstring(L, -2, &key_length) : NULL;
 		bool known = key != NULL &&
-			((first != NULL && strcmp(key, first) == 0) ||
-				(second != NULL && strcmp(key, second) == 0));
+			((first != NULL && key_length == strlen(first) &&
+				memcmp(key, first, key_length) == 0) ||
+				(second != NULL && key_length == strlen(second) &&
+					memcmp(key, second, key_length) == 0));
 		lua_pop(L, 1);
 		if (!known) {
 			luaL_argerror(L, index, "unknown profile option");

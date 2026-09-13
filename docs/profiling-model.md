@@ -51,9 +51,12 @@ Lua module 在 collector 启动前预留 stop 所需的 result userdata，因此
 
 同一个可嵌套 profiler-work guard 也排除其他 luaprof API 函数体创建的 Lua 对象。例如
 memory recorder 活跃时启动/停止 CPU recorder 或保留 `result:stats()` 返回 table，不会把
-这些控制对象计入 memory profile。Lua 在进入 C API 前为调用方表达式创建的对象（例如现场
-构造的 options table）仍属于被测 Lua workload；需要测量纯 API 内部开销时，应在启动
-memory recorder 之前构造并复用 options。
+这些控制对象计入 allocation sample、alloc-space 或 in-use。对象在 guard 结束后才由 GC
+释放时，释放动作仍可能进入 raw `free_events`；该计数不要求与 `allocation_events` 配对，
+也不产生导出 aggregate。guard 内 GC/realloc 释放已有的 sampled workload block 时仍会更新
+live-pointer map，避免停止时留下错误的 in-use。Lua 在进入 C API 前为调用方表达式创建的对象
+（例如现场构造的 options table）仍属于被测 Lua workload；需要测量纯 API 内部开销时，应在
+启动 memory recorder 之前构造并复用 options。
 
 停止后的 result 持有冻结的 profile：
 
@@ -213,8 +216,9 @@ Lua 重新分配自身 VM stack 时，call-frame 指针暂时不可用。被选�
 
 ### 3.3 内存统计项
 
-- `allocation_events`、`reallocation_events`、`free_events`：recording 期间精确的
-  allocator event 数。
+- `allocation_events`、`reallocation_events`、`free_events`：recording 期间进入业务记账的
+  allocator event 数。profiler-work guard 内产生的事件不计入；guard 外发生的 free 可能对应
+  recording 开始前或 guard 内的 allocation，因此三项不要求彼此配对。
 - `allocation_failures`：失败 allocation/realloc 数。
 - `samples`、`sampled_alloc_bytes`：成功进入可导出 aggregate 的入选 event 数和 requested
   bytes。
