@@ -334,11 +334,6 @@ timer_signal_handler(int signal_number, siginfo_t *info, void *context) {
 		event->state = L;
 		event->vm_state = vm_state;
 		event->cfunction = cfunction;
-		if (worker->worker_id < 64) {
-			atomic_fetch_or_explicit(&target->worker_mask,
-				UINT64_C(1) << worker->worker_id,
-				memory_order_relaxed);
-		}
 		atomic_store_explicit(&target->write_sequence, write + 1,
 			memory_order_release);
 		lua_profile_request(L, 1);
@@ -451,6 +446,11 @@ publish_slot(lp_skynet_worker *worker, lp_skynet_target *target,
 		memory_order_relaxed);
 	atomic_store_explicit(&worker->slot_quality_target, target,
 		memory_order_release);
+	/* Count workers that ran the target, even if no delivery was sampled. */
+	if (target != NULL && worker->worker_id < LP_SKYNET_WORKER_CAPACITY) {
+		atomic_fetch_or_explicit(&target->worker_mask,
+			UINT64_C(1) << worker->worker_id, memory_order_relaxed);
+	}
 }
 
 #if defined(LUAPROF_TESTING)

@@ -166,7 +166,8 @@ native profiler。GC 和 host 状态使用 synthetic frame。
 - `timer_failures`：Skynet worker timer 的 arm/disarm 系统调用失败次数。非零表示采样源曾
   不可用，profile 可能存在缺口；首次 target 启动的 arm 失败会直接令启动失败，不产生
   result。
-- `scheduler_workers`：Skynet target 实际使用过的 worker 数。
+- `scheduler_workers`：Skynet target 成功绑定过的 worker 数；即使该 worker 没有产生
+  有效样本，也计入一次。
 - `stack_truncations`、`aggregate_overflows`、`symbol_overflows`：有界存储的质量计数器。
 
 函数与 VM 状态占比使用“该函数或状态的有效样本数 / `samples`”。timer overrun

@@ -220,6 +220,62 @@ test_migration(void) {
 }
 
 static void *
+unsampled_migration_start_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(14);
+	sigset_t set;
+	sigset_t previous;
+	sigemptyset(&set);
+	sigaddset(&set, SIGRTMAX - 3);
+	assert(pthread_sigmask(SIG_BLOCK, &set, &previous) == 0);
+	lp_skynet_host_dispatch_enter(TARGET_HANDLE);
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 1 },
+	};
+	assert(lp_runtime_start(test->runtime, test->L, &config,
+		&test->generation) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	assert(pthread_sigmask(SIG_SETMASK, &previous, NULL) == 0);
+	return NULL;
+}
+
+static void *
+unsampled_migration_stop_worker(void *argument) {
+	scheduler_test *test = argument;
+	lp_skynet_host_worker_start(15);
+	sigset_t set;
+	sigset_t previous;
+	sigemptyset(&set);
+	sigaddset(&set, SIGRTMAX - 3);
+	assert(pthread_sigmask(SIG_BLOCK, &set, &previous) == 0);
+	lp_skynet_host_dispatch_enter(TARGET_HANDLE);
+	assert(lp_runtime_stop(test->runtime, test->L, LP_COLLECTOR_CPU,
+		test->generation, &test->result) == LP_OK);
+	lp_skynet_host_dispatch_leave();
+	lp_skynet_host_worker_stop();
+	assert(pthread_sigmask(SIG_SETMASK, &previous, NULL) == 0);
+	return NULL;
+}
+
+static void
+test_migration_without_samples(void) {
+	scheduler_test test;
+	open_test(&test);
+	pthread_t thread;
+	assert(pthread_create(&thread, NULL, unsampled_migration_start_worker,
+		&test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(pthread_create(&thread, NULL, unsampled_migration_stop_worker,
+		&test) == 0);
+	assert(pthread_join(thread, NULL) == 0);
+	assert(test.result.stats.samples == 0);
+	assert(test.result.stats.scheduler_workers == 2);
+	close_test(&test);
+}
+
+static void *
 concurrent_worker(void *argument) {
 	concurrent_test *concurrent = argument;
 	scheduler_test *test = concurrent->test;
@@ -382,6 +438,7 @@ test_memory_callback_is_profiler_overhead(void) {
 	assert(pthread_join(thread, NULL) == 0);
 	assert(test.result.stats.samples == 0);
 	assert(test.result.stats.profiler_overhead_events == 1);
+	assert(test.result.stats.scheduler_workers == 1);
 	close_test(&test);
 }
 
@@ -514,6 +571,7 @@ test_start_guard_covers_new_scheduler_target(void) {
 	assert(pthread_join(thread, NULL) == 0);
 	assert(test.result.stats.samples == 0);
 	assert(test.result.stats.profiler_overhead_events == 1);
+	assert(test.result.stats.scheduler_workers == 1);
 	close_test(&test);
 }
 
@@ -606,6 +664,7 @@ test_first_arm_failure_rolls_back_start(void) {
 int
 main(void) {
 	test_migration();
+	test_migration_without_samples();
 	test_concurrent_targets();
 	test_destroy_active_runtime();
 	test_transition_tick_accounting();
