@@ -3,10 +3,10 @@ package main
 
 import (
 	"bufio"
+	"encoding/xml"
 	"errors"
 	"flag"
 	"fmt"
-	"html"
 	"io"
 	"math"
 	"os"
@@ -393,7 +393,11 @@ func formatScaled(value float64, units []string, base float64) string {
 }
 
 func escape(value string) string {
-	return html.EscapeString(value)
+	var escaped strings.Builder
+	// EscapeText replaces invalid UTF-8 and characters forbidden by XML 1.0.
+	// A strings.Builder cannot return a write error.
+	_ = xml.EscapeText(&escaped, []byte(value))
+	return escaped.String()
 }
 
 const interactiveScript = `<script type="application/ecmascript"><![CDATA[

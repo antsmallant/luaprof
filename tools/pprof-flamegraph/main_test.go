@@ -122,6 +122,59 @@ func TestRenderInteractiveSVGIncludesControls(t *testing.T) {
 	assertValidXML(t, output.Bytes())
 }
 
+func TestEscapeXMLCharacters(t *testing.T) {
+	for _, test := range []struct {
+		name, input, want string
+	}{
+		{"markup", `<>&"'`, `<>&"'`},
+		{"whitespace", "\t\n\r", "\t\n\r"},
+		{"controls", "\x00\x01\x08\x0b\x0c\x0e\x1b\x1f", strings.Repeat("\ufffd", 8)},
+		{"invalid UTF-8", "before\xffafter", "before\ufffdafter"},
+		{"forbidden code points", "\ufffe\uffff", "\ufffd\ufffd"},
+		{"valid Unicode", "中文😀\u0020\ud7ff\ue000\ufffd\U00010000\U0010ffff", "中文😀\u0020\ud7ff\ue000\ufffd\U00010000\U0010ffff"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			escaped := escape(test.input)
+			var decoded struct {
+				Attribute string `xml:"value,attr"`
+				Text      string `xml:",chardata"`
+			}
+			if err := xml.Unmarshal([]byte(`<text value="`+escaped+`">`+escaped+`</text>`), &decoded); err != nil {
+				t.Fatalf("invalid escaped XML: %v", err)
+			}
+			if decoded.Attribute != test.want || decoded.Text != test.want {
+				t.Fatalf("decoded attribute = %q, text = %q; want %q", decoded.Attribute, decoded.Text, test.want)
+			}
+		})
+	}
+}
+
+func TestRenderSVGReplacesInvalidXMLCharacters(t *testing.T) {
+	for _, mode := range []string{"static", "interactive"} {
+		t.Run(mode, func(t *testing.T) {
+			const name = "work\x1b\xff\ufffe & <中文>"
+			root := newTreeNode("")
+			frame := newTreeNode(name)
+			frame.value = 10
+			root.children[name] = frame
+			root.value = 10
+			var output bytes.Buffer
+			err := renderSVG(&output, root, 10, metric{name: name, unit: name}, renderOptions{
+				title:       name,
+				width:       640,
+				interactive: mode == "interactive",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertValidXML(t, output.Bytes())
+			if !strings.Contains(output.String(), `data-name="work��� &amp; &lt;中文&gt;"`) {
+				t.Fatalf("SVG did not replace invalid frame characters:\n%s", output.String())
+			}
+		})
+	}
+}
+
 func assertValidXML(t *testing.T, data []byte) {
 	t.Helper()
 	decoder := xml.NewDecoder(bytes.NewReader(data))
