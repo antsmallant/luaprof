@@ -5,6 +5,8 @@
 #include "pprof_exporter.h"
 
 #include <assert.h>
+#include <inttypes.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <signal.h>
 #include <stdint.h>
@@ -30,6 +32,10 @@ typedef struct profile_summary {
 	uint64_t max_location_reference;
 	uint64_t max_function_reference;
 	uint64_t default_sample_type;
+	const unsigned char *string_data[128];
+	size_t string_lengths[128];
+	uint64_t comments[32];
+	size_t comment_count;
 	bool saw_period_type;
 	bool saw_period;
 	bool saw_empty_string_first;
@@ -351,6 +357,12 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 				}
 			}
 			else if (field == 6) {
+				if (summary->strings >= sizeof(summary->string_data) /
+					sizeof(summary->string_data[0])) {
+					return false;
+				}
+				summary->string_data[summary->strings] = message;
+				summary->string_lengths[summary->strings] = length;
 				if (summary->strings == 0 && length == 0) {
 					summary->saw_empty_string_first = true;
 				}
@@ -376,13 +388,20 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 				summary->saw_period_type = true;
 			}
 		}
-		else if ((field == 12 || field == 14) && wire == 0) {
+		else if ((field == 12 || field == 13 || field == 14) && wire == 0) {
 			uint64_t value;
 			if (!read_varint(data, size, &offset, &value)) {
 				return false;
 			}
 			if (field == 12) {
 				summary->saw_period = value != 0;
+			}
+			else if (field == 13) {
+				if (summary->comment_count >= sizeof(summary->comments) /
+					sizeof(summary->comments[0])) {
+					return false;
+				}
+				summary->comments[summary->comment_count++] = value;
 			}
 			else {
 				summary->default_sample_type = value;
@@ -392,13 +411,62 @@ parse_profile(const unsigned char *data, size_t size, size_t values,
 			return false;
 		}
 	}
-	return summary->sample_types == values && summary->samples != 0 &&
-		summary->locations != 0 && summary->functions != 0 &&
-		summary->mappings != 0 &&
+	for (size_t i = 0; i < summary->comment_count; ++i) {
+		if (summary->comments[i] >= summary->strings) {
+			return false;
+		}
+	}
+	return summary->sample_types == values &&
+		(summary->samples == 0 || (summary->locations != 0 &&
+		 summary->functions != 0 && summary->mappings != 0)) &&
 		summary->saw_empty_string_first && summary->saw_period_type &&
 		summary->saw_period && summary->default_sample_type < summary->strings &&
 		summary->max_location_reference <= summary->locations &&
 		summary->max_function_reference <= summary->functions;
+}
+
+static void
+assert_comment(const profile_summary *summary, const char *expected) {
+	size_t matches = 0;
+	for (size_t i = 0; i < summary->comment_count; ++i) {
+		size_t index = (size_t)summary->comments[i];
+		matches += bytes_equal(summary->string_data[index],
+			summary->string_lengths[index], expected);
+	}
+	assert(matches == 1);
+}
+
+static void
+assert_cpu_quality(const profile_summary *summary, const lp_result *result) {
+	const lp_result_stats *stats = &result->stats;
+	const struct {
+		const char *name;
+		uint64_t value;
+	} fields[] = {
+		{ "sample_hz", result->config.value.cpu.sample_hz },
+		{ "samples", stats->samples },
+		{ "overrun_events", stats->overrun_events },
+		{ "overrun_ticks", stats->overrun_ticks },
+		{ "dropped_events", stats->dropped_events },
+		{ "unstable_events", stats->unstable_events },
+		{ "profiler_overhead_events", stats->profiler_overhead_events },
+		{ "stale_events", stats->stale_events },
+		{ "timer_failures", stats->timer_failures },
+		{ "stack_truncations", stats->stack_truncations },
+		{ "aggregate_overflows", stats->aggregate_overflows },
+		{ "symbol_overflows", stats->symbol_overflows },
+		{ "scheduler_workers", stats->scheduler_workers },
+	};
+	assert(summary->comment_count == 15);
+	assert_comment(summary, "luaprof CPU sampling profile");
+	assert_comment(summary, "luaprof.metadata.version=1");
+	for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+		char text[96];
+		int length = snprintf(text, sizeof(text), "luaprof.cpu.%s=%" PRIu64,
+			fields[i].name, fields[i].value);
+		assert(length > 0 && (size_t)length < sizeof(text));
+		assert_comment(summary, text);
+	}
 }
 
 static unsigned char *
@@ -599,6 +667,7 @@ cpu_result(void) {
 		false);
 	lp_runtime_cpu_sample(runtime, generation, LP_VM_GC, NULL, &frame, 1,
 		false);
+	lp_runtime_cpu_quality(runtime, generation, 0, 0, 0, 1, 3);
 	lp_result result;
 	assert(lp_runtime_stop(runtime, NULL, LP_COLLECTOR_CPU, generation,
 		&result) == LP_OK);
@@ -655,12 +724,29 @@ memory_result(void) {
 	return result;
 }
 
+static void
+test_output_path(char *path, size_t capacity, const char *name) {
+	const char *directory = getenv("LP_PPROF_OUTPUT_DIR");
+	if (directory == NULL) {
+		directory = "/tmp";
+	}
+	int length = snprintf(path, capacity, "%s/luaprof-pprof-%s", directory,
+		name);
+	assert(length > 0 && (size_t)length < capacity);
+}
+
 int
 main(void) {
-	const char *cpu_path = "/tmp/luaprof-pprof-cpu.pb.gz";
-	const char *cpu_folded = "/tmp/luaprof-pprof-cpu.folded";
-	const char *memory_path = "/tmp/luaprof-pprof-memory.pb.gz";
-	const char *memory_folded = "/tmp/luaprof-pprof-memory.folded";
+	char cpu_path[PATH_MAX], cpu_folded[PATH_MAX];
+	char memory_path[PATH_MAX], memory_folded[PATH_MAX];
+	char empty_path[PATH_MAX], large_path[PATH_MAX], zero_path[PATH_MAX];
+	test_output_path(cpu_path, sizeof(cpu_path), "cpu.pb.gz");
+	test_output_path(cpu_folded, sizeof(cpu_folded), "cpu.folded");
+	test_output_path(memory_path, sizeof(memory_path), "memory.pb.gz");
+	test_output_path(memory_folded, sizeof(memory_folded), "memory.folded");
+	test_output_path(empty_path, sizeof(empty_path), "empty.pb.gz");
+	test_output_path(large_path, sizeof(large_path), "large.pb.gz");
+	test_output_path(zero_path, sizeof(zero_path), "zero.pb.gz");
 	(void)unlink(cpu_path);
 	(void)unlink(cpu_folded);
 	(void)unlink(memory_path);
@@ -690,6 +776,7 @@ main(void) {
 	unsigned char *data = read_gzip(cpu_path, &size);
 	profile_summary summary;
 	assert(parse_profile(data, size, 2, &summary));
+	assert_cpu_quality(&summary, &cpu);
 	assert(summary.saw_cpu);
 	assert(summary.saw_cpu_source);
 	assert(summary.saw_cfunction);
@@ -714,6 +801,68 @@ main(void) {
 		"recursive_root;visible.profiled [profiled_cfunction];recursive_caller;"
 		"visible.profiled [profiled_cfunction] 1\n") != NULL);
 	free(folded);
+
+	/* Metadata does not change either the CPU weights or folded stacks. */
+	const lp_result_stats recorded_stats = cpu.stats;
+	cpu.stats.overrun_events = 0;
+	cpu.stats.overrun_ticks = 0;
+	assert(lp_export_result(&cpu, zero_path, LP_EXPORT_PPROF, NULL, error,
+		sizeof(error)));
+	data = read_gzip(zero_path, &size);
+	assert(parse_profile(data, size, 2, &summary));
+	assert_cpu_quality(&summary, &cpu);
+	assert(summary.value_totals[0] == 5);
+	assert(summary.value_totals[1] == UINT64_C(50000000));
+	free(data);
+	folded = read_text(cpu_folded);
+	assert(lp_export_result_with_symbols(&cpu, cpu_folded, LP_EXPORT_FOLDED,
+		"samples", &symbols, error, sizeof(error)));
+	assert_text(cpu_folded, folded);
+	free(folded);
+	cpu.stats = recorded_stats;
+
+	lp_runtime *empty_runtime = lp_runtime_new(NULL, NULL, NULL);
+	assert(empty_runtime != NULL);
+	uint64_t empty_generation;
+	lp_collector_config config = {
+		.kind = LP_COLLECTOR_CPU,
+		.value.cpu = { .sample_hz = 100 },
+	};
+	assert(lp_runtime_start(empty_runtime, NULL, &config, &empty_generation)
+		== LP_OK);
+	lp_runtime_cpu_quality(empty_runtime, empty_generation, 1, 0, 0, 1, 3);
+	lp_result empty;
+	assert(lp_runtime_stop(empty_runtime, NULL, LP_COLLECTOR_CPU,
+		empty_generation, &empty) == LP_OK);
+	lp_runtime_delete(empty_runtime);
+	assert(lp_export_result(&empty, empty_path, LP_EXPORT_PPROF, NULL, error,
+		sizeof(error)));
+	data = read_gzip(empty_path, &size);
+	assert(parse_profile(data, size, 2, &summary));
+	assert_cpu_quality(&summary, &empty);
+	assert(summary.samples == 0);
+	free(data);
+	lp_result_dispose(&empty);
+
+	cpu.stats.overrun_ticks = UINT64_MAX;
+	cpu.stats.profiler_overhead_events = UINT64_C(9223372036854775808);
+	cpu.stats.dropped_events = 7;
+	cpu.stats.unstable_events = 8;
+	cpu.stats.stale_events = 9;
+	cpu.stats.timer_failures = 10;
+	cpu.stats.stack_truncations = 11;
+	cpu.stats.aggregate_overflows = 12;
+	cpu.stats.symbol_overflows = 13;
+	cpu.stats.scheduler_workers = 2;
+	assert(lp_export_result(&cpu, large_path, LP_EXPORT_PPROF, NULL, error,
+		sizeof(error)));
+	data = read_gzip(large_path, &size);
+	assert(parse_profile(data, size, 2, &summary));
+	assert_cpu_quality(&summary, &cpu);
+	assert(summary.value_totals[0] == 5);
+	assert(summary.value_totals[1] == UINT64_C(50000000));
+	free(data);
+	cpu.stats = recorded_stats;
 
 	char failure_directory[] = "/tmp/luaprof-export-failure-XXXXXX";
 	assert(mkdtemp(failure_directory) != NULL);
@@ -766,6 +915,8 @@ main(void) {
 		"cpu", error, sizeof(error)));
 	data = read_gzip(memory_path, &size);
 	assert(parse_profile(data, size, 4, &summary));
+	assert(summary.comment_count == 1);
+	assert_comment(&summary, "luaprof memory sampling profile");
 	assert(summary.saw_alloc_space);
 	assert(summary.saw_inuse_space);
 	assert(summary.saw_memory_source);
@@ -781,6 +932,9 @@ main(void) {
 		assert(remove(cpu_folded) == 0);
 		assert(remove(memory_path) == 0);
 		assert(remove(memory_folded) == 0);
+		assert(remove(empty_path) == 0);
+		assert(remove(large_path) == 0);
+		assert(remove(zero_path) == 0);
 	}
 	puts("luaprof pprof and folded exporter: ok");
 	return EXIT_SUCCESS;

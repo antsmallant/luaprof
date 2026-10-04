@@ -45,6 +45,7 @@ type renderOptions struct {
 	width       int
 	palette     string
 	interactive bool
+	quality     *cpuQuality
 }
 
 func main() {
@@ -118,6 +119,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		width:       *width,
 		palette:     *palette,
 		interactive: *interactive,
+		quality:     readCPUQuality(parsed),
 	})
 }
 
@@ -237,6 +239,11 @@ func renderSVG(output io.Writer, root *treeNode, total int64, selected metric,
 		chartTop = interactiveHeaderHeight
 		mode = "Interactive"
 	}
+	qualityTop := chartTop
+	qualityLines := wrapQualityLines(options.quality.lines(), options.width)
+	if len(qualityLines) != 0 {
+		chartTop += len(qualityLines)*16 + 8
+	}
 	depth := maximumDepth(root)
 	height := chartTop + footerHeight + depth*frameHeight
 	writer := bufio.NewWriter(output)
@@ -245,7 +252,7 @@ func renderSVG(output io.Writer, root *treeNode, total int64, selected metric,
 	fmt.Fprintf(writer, "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%d\" height=\"%d\" viewBox=\"0 0 %d %d\" overflow=\"hidden\" role=\"img\" aria-labelledby=\"title description\">\n", options.width, height, options.width, height)
 	fmt.Fprintf(writer, "<title id=\"title\">%s</title>\n", escape(options.title))
 	fmt.Fprintf(writer, "<desc id=\"description\">%s flame graph for pprof sample type %s, total %s.</desc>\n", mode, escape(selected.name), escape(formatValue(total, selected.unit)))
-	fmt.Fprintln(writer, "<style>text{font-family:Verdana,sans-serif;fill:#171717}.heading{font-size:16px}.subtitle{font-size:11px;fill:#555}.control{font-size:11px;fill:#0645ad;cursor:pointer;text-decoration:underline}.frame text{font-size:11px;pointer-events:none}.frame rect{stroke:#fff;stroke-width:.5}.frame:hover rect{stroke:#111;stroke-width:1}.frame.matched rect{stroke:#c000c0;stroke-width:2}</style>")
+	fmt.Fprintln(writer, "<style>text{font-family:Verdana,sans-serif;fill:#171717}.heading{font-size:16px}.subtitle{font-size:11px;fill:#555}.quality{font-family:monospace;font-size:11px;fill:#555}.control{font-size:11px;fill:#0645ad;cursor:pointer;text-decoration:underline}.frame text{font-size:11px;pointer-events:none}.frame rect{stroke:#fff;stroke-width:.5}.frame:hover rect{stroke:#111;stroke-width:1}.frame.matched rect{stroke:#c000c0;stroke-width:2}</style>")
 	fmt.Fprintln(writer, "<rect width=\"100%\" height=\"100%\" fill=\"#fff\"/>")
 	fmt.Fprintf(writer, "<text class=\"heading\" x=\"10\" y=\"23\">%s</text>\n", escape(options.title))
 	fmt.Fprintf(writer, "<text class=\"subtitle\" x=\"10\" y=\"42\">sample: %s; total: %s; widths are inclusive sample values</text>\n", escape(selected.name), escape(formatValue(total, selected.unit)))
@@ -253,6 +260,14 @@ func renderSVG(output io.Writer, root *treeNode, total int64, selected metric,
 		fmt.Fprintln(writer, "<text id=\"search\" class=\"control\" x=\"10\" y=\"65\">Search (Ctrl-F)</text>")
 		fmt.Fprintln(writer, "<text id=\"reset\" class=\"control\" x=\"112\" y=\"65\">Reset zoom</text>")
 		fmt.Fprintf(writer, "<text id=\"matched\" class=\"subtitle\" x=\"%d\" y=\"65\" text-anchor=\"end\"></text>\n", options.width-10)
+	}
+	if len(qualityLines) != 0 {
+		fmt.Fprintln(writer, "<g id=\"quality\">")
+		for index, line := range qualityLines {
+			fmt.Fprintf(writer, "<text class=\"quality\" x=\"10\" y=\"%d\">%s</text>\n",
+				qualityTop+6+index*16, escape(line))
+		}
+		fmt.Fprintln(writer, "</g>")
 	}
 
 	fmt.Fprintln(writer, "<g id=\"frames\">")

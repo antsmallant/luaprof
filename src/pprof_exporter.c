@@ -19,6 +19,7 @@
 #define LP_EXPORT_FUNCTION_HASH_CAPACITY 16384u
 #define LP_EXPORT_LOCATION_HASH_CAPACITY 262144u
 #define LP_EXPORT_TEMP_NAME ".luaprof-tmp-XXXXXX"
+#define LP_EXPORT_COMMENT_CAPACITY 15u
 
 typedef struct lp_buffer {
 	unsigned char *data;
@@ -112,7 +113,8 @@ typedef struct lp_export_model {
 	int64_t period_type;
 	int64_t period_unit;
 	int64_t period;
-	int64_t comment;
+	int64_t comments[LP_EXPORT_COMMENT_CAPACITY];
+	size_t comment_count;
 	bool failed;
 	char failure[160];
 } lp_export_model;
@@ -824,6 +826,49 @@ select_metric(lp_export_model *model, const char *requested) {
 	return false;
 }
 
+static void
+add_comment(lp_export_model *model, const char *text) {
+	if (model->comment_count == LP_EXPORT_COMMENT_CAPACITY) {
+		model_fail(model, "too many profile comments");
+		return;
+	}
+	model->comments[model->comment_count++] = add_literal(model, text);
+}
+
+static void
+add_cpu_quality(lp_export_model *model, const lp_result *result) {
+	const lp_result_stats *stats = &result->stats;
+	const struct {
+		const char *name;
+		uint64_t value;
+	} fields[] = {
+		{ "sample_hz", result->config.value.cpu.sample_hz },
+		{ "samples", stats->samples },
+		{ "overrun_events", stats->overrun_events },
+		{ "overrun_ticks", stats->overrun_ticks },
+		{ "dropped_events", stats->dropped_events },
+		{ "unstable_events", stats->unstable_events },
+		{ "profiler_overhead_events", stats->profiler_overhead_events },
+		{ "stale_events", stats->stale_events },
+		{ "timer_failures", stats->timer_failures },
+		{ "stack_truncations", stats->stack_truncations },
+		{ "aggregate_overflows", stats->aggregate_overflows },
+		{ "symbol_overflows", stats->symbol_overflows },
+		{ "scheduler_workers", stats->scheduler_workers },
+	};
+	add_comment(model, "luaprof.metadata.version=1");
+	for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+		char text[96];
+		int length = snprintf(text, sizeof(text), "luaprof.cpu.%s=%" PRIu64,
+			fields[i].name, fields[i].value);
+		if (length < 0 || (size_t)length >= sizeof(text)) {
+			model_fail(model, "cannot format CPU quality metadata");
+			return;
+		}
+		add_comment(model, text);
+	}
+}
+
 static bool
 model_init(lp_export_model *model, const lp_result *result,
 	const char *sample_type, const lp_export_symbols *symbols) {
@@ -860,7 +905,8 @@ model_init(lp_export_model *model, const lp_result *result,
 		model->period_unit = add_literal(model, "nanoseconds");
 		model->period = (int64_t)(UINT64_C(1000000000) /
 			result->config.value.cpu.sample_hz);
-		model->comment = add_literal(model, "luaprof CPU sampling profile");
+		add_comment(model, "luaprof CPU sampling profile");
+		add_cpu_quality(model, result);
 	}
 	else if (result->kind == LP_COLLECTOR_MEMORY) {
 		model->sample_names[0] = "alloc_objects";
@@ -877,7 +923,7 @@ model_init(lp_export_model *model, const lp_result *result,
 		model->period_unit = add_literal(model, "bytes");
 		model->period = clamp_i64(
 			result->config.value.memory.sample_bytes);
-		model->comment = add_literal(model, "luaprof memory sampling profile");
+		add_comment(model, "luaprof memory sampling profile");
 	}
 	else {
 		model_fail(model, "invalid result kind");
@@ -1052,7 +1098,9 @@ encode_profile(const lp_export_model *model, lp_buffer *profile) {
 	}
 	emit_value_type(profile, 11, model->period_type, model->period_unit);
 	buffer_field_varint(profile, 12, (uint64_t)model->period);
-	buffer_field_varint(profile, 13, (uint64_t)model->comment);
+	for (size_t i = 0; i < model->comment_count; ++i) {
+		buffer_field_varint(profile, 13, (uint64_t)model->comments[i]);
+	}
 	buffer_field_varint(profile, 14,
 		(uint64_t)model->sample_name_indices[model->default_value]);
 	return !profile->failed;

@@ -266,6 +266,34 @@ Memory profile 包含：
 默认 sample 对 CPU 是 `cpu`；memory 关闭 free tracking 时是 `alloc_space`，启用时是
 `inuse_space`。
 
+CPU `.pb.gz` 默认将采集配置和质量计数作为标准 pprof `comment` 文本保存。文件复制、
+归档后，可直接查看，无需原来的 `result:stats()` 或日志：
+
+```sh
+go tool pprof -comments cpu.pb.gz
+```
+
+除原有的 `luaprof CPU sampling profile` 描述外，comment 包含版本标识
+`luaprof.metadata.version=1`，以及以下形式的十进制无符号整数文本，例如：
+
+```text
+luaprof.cpu.sample_hz=100
+luaprof.cpu.samples=137
+luaprof.cpu.overrun_events=1
+luaprof.cpu.overrun_ticks=3
+```
+
+完整字段为 `sample_hz`、`samples`、`overrun_events`、`overrun_ticks`、`dropped_events`、
+`unstable_events`、`profiler_overhead_events`、`stale_events`、`timer_failures`、
+`stack_truncations`、`aggregate_overflows`、`symbol_overflows` 和 `scheduler_workers`，
+包括零值。配置和计数来自同一个停止后的 result；它们不新增 sample type，不参与 CPU
+权重、热点排序或 folded stack 输出。计数文本保留完整 uint64 范围，不经过浮点数转换。
+
+comment 是辅助诊断文本；第三方工具重新处理、合并或清理 profile 时可能删除或重复
+这些文本，不能把处理后的文件视为原始质量记录。移除 comment 后 profile 仍然可以正常
+分析。旧文件未提供这些字段时，不能据此认定 overrun 或其他损失为零。本轮仅导出 CPU
+质量信息，memory profile 的统计仍通过 `result:stats()` 读取。
+
 两种格式都先写入目标目录内的唯一临时文件；只有完整写入并成功关闭后才用原子 rename
 替换目标。写入、close 或 rename 失败时，已有目标保持不变，临时文件会被删除。替换已有
 普通文件时保留其 permission bits；创建新文件时使用 `0600`。若目标路径是 symlink，替换
@@ -300,6 +328,16 @@ inclusive value，横向位置不表示时间顺序。输出不包含脚本，�
 这条路径只读取既有 profile，不要求采集时额外调用 `result:write(..., { format = "folded" })`。
 该可选工具使用 Go 1.24+ 和 `github.com/google/pprof/profile` 解析标准 profile.proto，不需要
 Graphviz、Perl 或额外的 flame graph 工具。
+
+CPU 火焰图在图上方展示保存的有效样本数、采样频率与 overrun event/tick。其他损失
+计数非零时也显示字段和值，并提示采样可能受影响；Skynet profile 还显示非零的 worker
+数。质量摘要会随图宽换行，不改变 frame 宽度。静态和交互 SVG 均保留这些文字。
+没有元数据的 CPU 文件显示 `CPU quality: unavailable`；未知或重复版本不解析为有效
+计数，缺失、重复或无效字段标为 unknown 并列出问题，均不阻止已有样本的分析。
+空 CPU profile 仍可通过 `-comments` 读取质量信息，火焰图工具继续报告无正值样本。
+
+overrun tick 没有独立执行现场，不会补到信号实际送达时的栈。质量摘要只展示原始计数，
+不计算统一丢样率或精确时间覆盖率；即使计数全零，固定周期锁相等采样偏差仍可能存在。
 
 默认 SVG 特意不含脚本，适合作为 GitHub 图片或报告附件。需要在浏览器本地分析时加入
 `--interactive`：

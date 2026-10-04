@@ -155,7 +155,7 @@ $(LUA55_BUILD_DIR):
 $(SKYNET_BUILD_DIR):
 	mkdir -p $@
 
-$(PPROF_FLAMEGRAPH): $(PPROF_FLAMEGRAPH_DIR)/go.mod $(PPROF_FLAMEGRAPH_DIR)/go.sum $(PPROF_FLAMEGRAPH_DIR)/main.go | $(BUILD_DIR)
+$(PPROF_FLAMEGRAPH): $(PPROF_FLAMEGRAPH_DIR)/go.mod $(PPROF_FLAMEGRAPH_DIR)/go.sum $(PPROF_FLAMEGRAPH_DIR)/main.go $(PPROF_FLAMEGRAPH_DIR)/quality.go | $(BUILD_DIR)
 	cd $(PPROF_FLAMEGRAPH_DIR) && go build -o $@ .
 
 $(BUILD_DIR)/thread-vm-smoke: examples/thread_vm/main.c $(LUA_LIB) | $(BUILD_DIR)
@@ -550,7 +550,7 @@ test-pprof-exporter: $(PPROF_EXPORTER_TEST)
 
 pprof-flamegraph: $(PPROF_FLAMEGRAPH)
 
-test-pprof-flamegraph: $(PPROF_FLAMEGRAPH) example-thread-vm example-skynet
+test-pprof-flamegraph: $(PPROF_FLAMEGRAPH) $(PPROF_EXPORTER_TEST) example-thread-vm example-skynet
 	cd $(PPROF_FLAMEGRAPH_DIR) && go test ./...
 	./tests/integration/pprof_flamegraph.sh $(PPROF_FLAMEGRAPH)
 
