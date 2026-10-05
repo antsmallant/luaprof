@@ -307,6 +307,7 @@ go tool pprof -top cpu.pb.gz
 go tool pprof -lines -top cpu.pb.gz
 go tool pprof -list=calculate_orders cpu.pb.gz
 go tool pprof -sample_index=alloc_space -top heap.pb.gz
+go tool pprof -sample_index=alloc_objects -top heap.pb.gz
 go tool pprof -sample_index=inuse_space -top heap.pb.gz
 go tool pprof -sample_index=inuse_objects -top heap.pb.gz
 go tool pprof -sample_index=inuse_space -svg heap.pb.gz > heap.svg
